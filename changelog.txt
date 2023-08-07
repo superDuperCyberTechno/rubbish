@@ -1,0 +1,34 @@
+1.0.0 (2023-07-01)
+ Initial release
+
+1.0.1 (2023-07-02)
+ Tweaked styling
+ Minor rewrites
+ Added version number to interface
+ Removed version from file name
+
+1.1.1 (2023-07-03)
+ Added togglable experimental parser (based on https://github.com/summerstyle/jsonTreeViewer)
+ Added togglable autojump
+ Tweaked styling
+
+1.2.3 (2023-07-05)
+ Supports non-JSON dumps
+ Copied text is whitespace-trimmed
+ "Parser" is now "Interactive"
+ Interactive disabled by default
+ Added scrollbar
+ Tweaked styling
+
+1.2.4 (2023-07-05)
+ Dump headers now have more more defined colors related to their neighbors
+ Tweaked styling
+
+1.2.5 (2023-07-05)
+ Dump headers are now more compact (dump content info box)
+ Tweaked styling
+
+1.2.6 (2023-07-06)
+ Fixed keyboard shortcut for Interactive mode
+ Added a spacer to dynamically add space to the bottom of the content if needed
+ Tweaked styling

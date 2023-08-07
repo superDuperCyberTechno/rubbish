@@ -1,0 +1,28 @@
+{
+    "name": "rubbish",
+    "productName": "rubbish",
+    "version": "1.2.6",
+    "main": "main.js",
+    "devDependencies": {
+        "electron": "^25.4.0",
+        "electron-builder": "^24.6.3"
+    },
+    "scripts": {
+        "start": "APP_DEV=true electron .",
+        "package": "electron-builder -lw"
+    },
+    "dependencies": {},
+    "build": {
+        "artifactName": "rubbish.${ext}",
+        "linux": {
+            "target": [
+                "AppImage"
+            ]
+        },
+        "win": {
+            "target": [
+                "portable"
+            ]
+        }
+    }
+}

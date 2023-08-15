@@ -201,11 +201,11 @@ function ms_diff(date1, date2) {
     let diff = date1.getTime() - date2.getTime()
 
     if (diff > 60000) {
-        diff = Math.round(diff / 60000) + 'm'
+        diff = (Math.round(diff / 6000) / 10) + 'm'
     }
 
     else if (diff > 1000) {
-        diff = Math.round(diff / 1000) + 's'
+        diff = (Math.round(diff / 100) / 10) + 's'
     }
 
     else {

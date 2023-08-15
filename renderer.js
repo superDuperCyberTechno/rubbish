@@ -5,13 +5,20 @@ window.api.getVersion().then(function(version){
 })
 
 let autojump_enabled = true,
-    interactive_enabled = false
+    interactive_enabled = false,
+    last_dump_timestamp = '',
+    delta = null
 
 window.api.dump((event, dump) => {
     let now = new Date();
+
+    if (last_dump_timestamp) {
+        delta = ms_diff(now, last_dump_timestamp)
+    }
+
     let offset = now.getTimezoneOffset()
-    now = new Date(now.getTime() - (offset * 60 * 1000))
-    let timestamp = now.toISOString().split('T')[1]
+    now_actual = new Date(now.getTime() - (offset * 60 * 1000))
+    let timestamp = now_actual.toISOString().split('T')[1]
     timestamp = timestamp.substring(0, timestamp.length - 1)
 
     let dump_string
@@ -35,9 +42,13 @@ window.api.dump((event, dump) => {
     }
 
     let header_content = ''
-    header_content += timestamp
+    header_content += timestamp 
+    if (delta) {
+        header_content += '|Δ'+delta
+    }
+
     header_content += '<div class="dump-info">'+lines + (lines > 1 ? ' lines' : ' line') + '<br>'+((dump.is_valid_json) ? 'JSON' : 'plaintext')+'</div>'
-    header_content += dump.title
+    header_content += dump.title ?? ''
 
     header.insertAdjacentHTML('beforeend', header_content)
     dumps_container.appendChild(header)
@@ -61,6 +72,8 @@ window.api.dump((event, dump) => {
         let last_header = dumps_container.lastChild.previousSibling.previousSibling
         last_header.scrollIntoView()
     }
+
+    last_dump_timestamp = now
 })
 
 function modify_spacer_height() {
@@ -182,4 +195,22 @@ function rand_color() {
     hsl_color_angle = (hsl_color_angle + 140 + Math.random() * 40) % 360
     color = "hsl(" + hsl_color_angle + ", 70%, 65%)"
     return color
+}
+
+function ms_diff(date1, date2) {
+    let diff = date1.getTime() - date2.getTime()
+
+    if (diff > 60000) {
+        diff = Math.round(diff / 60000) + 'm'
+    }
+
+    else if (diff > 1000) {
+        diff = Math.round(diff / 1000) + 's'
+    }
+
+    else {
+        diff = diff + 'ms'
+    }
+
+    return diff
 }

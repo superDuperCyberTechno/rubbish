@@ -32,3 +32,6 @@
  Fixed keyboard shortcut for Interactive mode
  Added a spacer to dynamically add space to the bottom of the content if needed
  Tweaked styling
+
+1.3.0 (2023-08-15)
+ Added delta timer

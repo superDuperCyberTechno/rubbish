@@ -35,13 +35,19 @@ If you have a function for _rubbish_ in your preferred language, please don't he
 ```
 function rub($dump, $title = null)
 {
-    $ch = curl_init("http://localhost:7771");
+    if (is_int($dump) || $dump === null) {
+        $dump = strval($dump);
+    }
+
+    $ch = curl_init('http://localhost:7771');
     curl_setopt($ch, CURLOPT_POST, 1);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($dump));
-    curl_setopt($ch, CURLOPT_ENCODING, "UTF-8");
-    if ($title) {
+    curl_setopt($ch, CURLOPT_ENCODING, 'UTF-8');
+
+    if ($title !== null) {
         curl_setopt($ch, CURLOPT_HTTPHEADER, ["rubbish-title: {$title}"]);
     }
+
     curl_exec($ch);
 }
 ```

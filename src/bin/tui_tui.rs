@@ -3,6 +3,7 @@ use std::io::Read;
 use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
+// mpsc types used directly where needed
 use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
 use crossterm::event::{self, Event as CEvent, KeyCode};
@@ -93,6 +94,13 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
     }
 
     (entries, paths)
+}
+
+#[derive(Debug)]
+    Created(PathBuf),
+    Modified(PathBuf),
+    Removed(PathBuf),
+    Rescan,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -198,58 +206,94 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // filesystem watcher: notify main thread when dumps_dir content changes
-    // Replace polling with notify crate (recommended). If notify isn't available, fall back to polling.
-    let (fs_tx, _fs_rx) = std::sync::mpsc::channel();
+    // Use a typed WatchEvent channel so we can send granular events to the UI.
+    let (fs_tx, fs_rx) = std::sync::mpsc::channel::<WatchEvent>();
     let watch_dir = dumps_dir.clone();
-    // Try to spawn a notify-based watcher; if the crate is not available at runtime, fallback to polling.
-    thread::spawn(move || {
-        // attempt dynamic watcher using the `notify` crate; if building fails, fallback to simple polling
-        if cfg!(feature = "use_notify") {
-            // This branch requires the `notify` crate enabled via Cargo.toml and a feature flag.
-            if let Err(e) = (|| -> Result<(), Box<dyn std::error::Error>> {
-                use notify::{Watcher, RecursiveMode, RecommendedWatcher};
-                use std::sync::mpsc::RecvTimeoutError;
 
-                let (tx, rx) = std::sync::mpsc::channel();
-                let mut watcher: RecommendedWatcher = RecommendedWatcher::new(tx, notify::Config::default())?;
-                watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+    // notify-based watcher (compiled only when feature `use_notify` is enabled)
+    #[cfg(feature = "use_notify")]
+    {
+        let tx = fs_tx.clone();
+        let watch_dir2 = watch_dir.clone();
+        thread::spawn(move || {
+            use notify::{Watcher, RecursiveMode, RecommendedWatcher, EventKind};
+            use std::sync::mpsc::RecvTimeoutError;
+
+            if let Err(e) = (|| -> Result<(), Box<dyn std::error::Error>> {
+                let (local_tx, rx) = std::sync::mpsc::channel();
+                let mut watcher: RecommendedWatcher = RecommendedWatcher::new(local_tx, notify::Config::default())?;
+                watcher.watch(&watch_dir2, RecursiveMode::NonRecursive)?;
 
                 loop {
-                    match rx.recv_timeout(Duration::from_secs(1)) {
-                        Ok(_ev) => { let _ = fs_tx.send(()); }
+                match rx.recv_timeout(Duration::from_secs(1)) {
+                        Ok(Ok(ev)) => {
+                            for p in ev.paths.iter() {
+                                let we = match &ev.kind {
+                                    EventKind::Create(_) => WatchEvent::Created(p.clone()),
+                                    EventKind::Modify(_) => WatchEvent::Modified(p.clone()),
+                                    EventKind::Remove(_) => WatchEvent::Removed(p.clone()),
+                                    _ => WatchEvent::Rescan,
+                                };
+                                let _ = tx.send(we);
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("notify event error: {}", e);
+                            let _ = tx.send(WatchEvent::Rescan);
+                        }
                         Err(RecvTimeoutError::Timeout) => continue,
-                        Err(_) => break,
+                        Err(_) => break Ok(()),
                     }
                 }
-                Ok(())
+
+                // ok
+                // unreachable normally
+                // Ok(())
             })() {
                 eprintln!("notify-based watcher failed: {} - falling back to polling", e);
-            } else {
-                return;
             }
-        }
+        });
+    }
 
-        // Fallback polling implementation
-        let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
-        loop {
-            let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();
-            if let Ok(rd) = std::fs::read_dir(&watch_dir) {
-                for e in rd.filter_map(|e| e.ok()) {
-                    let p = e.path();
-                    if p.is_file() {
-                        if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
-                            current.insert(p.to_string_lossy().to_string(), m);
+    // polling fallback watcher (compiled when notify feature is not enabled)
+    #[cfg(not(feature = "use_notify"))]
+    {
+        let tx = fs_tx.clone();
+        let watch_dir2 = watch_dir.clone();
+        thread::spawn(move || {
+            let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
+            loop {
+                let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();
+                if let Ok(rd) = std::fs::read_dir(&watch_dir2) {
+                    for e in rd.filter_map(|e| e.ok()) {
+                        let p = e.path();
+                        if p.is_file() {
+                            if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                                current.insert(p.to_string_lossy().to_string(), m);
+                            }
                         }
                     }
                 }
+                if current != last {
+                    // determine created/removed/modified by comparing maps
+                    for (k, m) in current.iter() {
+                        if !last.contains_key(k) {
+                            let _ = tx.send(WatchEvent::Created(PathBuf::from(k)));
+                        } else if last.get(k).map(|t| t != m).unwrap_or(false) {
+                            let _ = tx.send(WatchEvent::Modified(PathBuf::from(k)));
+                        }
+                    }
+                    for k in last.keys() {
+                        if !current.contains_key(k) {
+                            let _ = tx.send(WatchEvent::Removed(PathBuf::from(k)));
+                        }
+                    }
+                    last = current;
+                }
+                std::thread::sleep(Duration::from_secs(1));
             }
-            if current != last {
-                let _ = fs_tx.send(());
-                last = current;
-            }
-            std::thread::sleep(Duration::from_secs(1));
-        }
-    });
+        });
+    }
 
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
@@ -297,6 +341,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // render loop
     loop {
+        // handle filesystem events (non-blocking) and refresh entries/paths/preview
+        if let Ok(ev) = fs_rx.try_recv() {
+            match ev {
+                WatchEvent::Created(_) | WatchEvent::Modified(_) | WatchEvent::Removed(_) | WatchEvent::Rescan => {
+                    let (new_entries, new_paths) = scan_dumps(&dumps_dir);
+                    entries = new_entries;
+                    paths = new_paths;
+                    if entries.is_empty() {
+                        preview = "(no preview available)".to_string();
+                        state.select(None);
+                    } else {
+                        // ensure selection is valid
+                        match state.selected() {
+                            Some(i) if i < entries.len() => {
+                                if let Some(p) = paths.get(i) {
+                                    preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                }
+                            }
+                            _ => {
+                                state.select(Some(0));
+                                if let Some(p) = paths.get(0) {
+                                    preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         terminal.draw(|f| {
             let size = f.size();
             let chunks = Layout::default()

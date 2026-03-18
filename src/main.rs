@@ -1,5 +1,6 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
-use axum::Server;
+// axum 0.8 does not export `Server` at the crate root; we'll use hyper::Server with the axum service
+use hyper::Server as HyperServer;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;
@@ -15,7 +16,7 @@ async fn main() {
     info!(%addr, "starting rubbish dump server");
 
     // axum provides a helper to run the service via hyper; construct the hyper server
-    let server = Server::bind(&addr).serve(app.into_make_service());
+    let server = HyperServer::bind(&addr).serve(app.into_make_service());
 
     // Run server until ctrl-c
     tokio::select! {

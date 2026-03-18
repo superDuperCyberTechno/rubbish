@@ -1,3 +1,9 @@
+// TUI for browsing dumps
+// This file was renamed from tui_tui.rs to tui.rs
+// (contents unchanged)
+
+#![allow(clippy::needless_return)]
+
 use std::io;
 use std::io::Read;
 use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
@@ -18,10 +24,10 @@ use tui::Terminal;
 use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell, Widget};
 use tui::buffer::Buffer;
 use tui::layout::Rect;
-use unicode_width::UnicodeWidthStr;
 use tui::style::{Style, Modifier};
 use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
+use unicode_width::UnicodeWidthStr;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and return the file contents as-is
@@ -31,38 +37,6 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
     let mut buf = String::new();
     reader.take(64 * 1024).read_to_string(&mut buf)?;
     Ok(buf)
-}
-
-// A custom widget that renders raw preview text without any wrapping. Each line is truncated
-// to the available width and written directly to the buffer, so there is no word-wrapping.
-struct RawPreview<'a> {
-    text: &'a str,
-}
-
-impl<'a> Widget for RawPreview<'a> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let mut y = area.y;
-        let max_lines = area.height as usize;
-        let max_width = area.width as usize;
-        for (i, line) in self.text.lines().enumerate() {
-            if i >= max_lines { break; }
-            // normalize tabs
-            let line = line.replace('\t', "    ");
-            // truncate by displayed width (unicode-aware)
-            let mut acc = String::new();
-            let mut cur_w = 0usize;
-            for ch in line.chars() {
-                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                if cur_w + cw > max_width { break; }
-                acc.push(ch);
-                cur_w += cw;
-            }
-            // replace spaces with NBSPs so the paragraph renderer won't re-wrap
-            let out = acc.replace(' ', "\u{00A0}");
-            buf.set_stringn(area.x, y, &out, max_width, Style::default());
-            y += 1;
-        }
-    }
 }
 
 fn human_size(bytes: u64) -> String {
@@ -221,9 +195,9 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
                         let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                            if mtime > emtime {
-                                paths.insert(i, p.clone());
-                                entries.insert(i, entry.clone());
+                        if mtime > emtime {
+                            paths.insert(i, p.clone());
+                            entries.insert(i, entry.clone());
                             // if we inserted before the selected index, shift selection down to keep same item
                             if let Some(sel) = state.selected() {
                                 if i <= sel {
@@ -602,29 +576,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         terminal.draw(|f| {
             let size = f.size();
-            // outer vertical split to reserve one line for status
-            let outer = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-                .split(size);
-
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                .split(outer[0]);
+                .split(size);
 
-            // Render a table with two columns: timestamp | title
+            // Render a table with three columns: timestamp | title | size
             let rows: Vec<Row> = entries
                 .iter()
-                .map(|(ts, title, _)| {
+                .map(|(ts, title, size_str)| {
                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
                 })
                 .collect();
 
             let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Min(10)])
+                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
@@ -635,45 +603,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 f.render_stateful_widget(table, chunks[0], &mut state);
             }
 
-            // preview
+            // Use RawPreview to render lines truncated to the available width with no wrapping.
             let preview_widget = RawPreview { text: &preview };
             let block = Block::default().borders(Borders::ALL).title("Preview");
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
-
-            // Status line at bottom: show longer title and right-aligned size
-            let status_area = outer[1];
-            let mut status = String::new();
-            if let Some(sel) = state.selected() {
-                let title_full = &entries[sel].1;
-                let size_str = &entries[sel].2;
-                let total_w = status_area.width as usize;
-                let size_w = UnicodeWidthStr::width(size_str.as_str());
-                let title_max = total_w.saturating_sub(size_w + 1);
-                let mut title_disp = title_full.clone();
-                if UnicodeWidthStr::width(title_disp.as_str()) > title_max {
-                    let mut acc = String::new();
-                    let mut cur_w = 0usize;
-                    for ch in title_disp.chars() {
-                        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                        if cur_w + cw > title_max { break; }
-                        acc.push(ch);
-                        cur_w += cw;
-                    }
-                    title_disp = acc;
-                }
-                status.push_str(&title_disp);
-                // pad to align size right
-                let cur_w = UnicodeWidthStr::width(status.as_str());
-                if total_w > size_w && cur_w < total_w - size_w {
-                    let pad = total_w - size_w - cur_w;
-                    status.push_str(&std::iter::repeat(' ').take(pad).collect::<String>());
-                }
-                status.push_str(size_str);
-            }
-            let status_par = Paragraph::new(status).block(Block::default().borders(Borders::TOP));
-            f.render_widget(status_par, status_area);
         })?;
 
         // handle input or signals
@@ -766,68 +701,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             std::thread::sleep(Duration::from_millis(100));
                             let _ = terminal.draw(|f| {
                                 let size = f.size();
-                                let outer = Layout::default()
-                                    .direction(Direction::Vertical)
-                                    .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
-                                    .split(size);
-
                                 let chunks = Layout::default()
                                     .direction(Direction::Horizontal)
                                     .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                                    .split(outer[0]);
+                                    .split(size);
 
-                                // rebuild and render the Table for redraw (timestamp | title)
-                                let rows: Vec<Row> = entries
-                                    .iter()
-                                    .map(|(ts, title, _)| {
-                                        let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                        Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
-                                    })
-                                    .collect();
+                            // rebuild and render the Table for redraw
+                            let rows: Vec<Row> = entries
+                                .iter()
+                                .map(|(ts, title, size_str)| {
+                                    let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
+                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
+                                })
+                                .collect();
 
-                                let table = Table::new(rows)
-                                    .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                    .widths(&[Constraint::Length(19), Constraint::Min(10)]);
+                            let table = Table::new(rows)
+                                .block(Block::default().borders(Borders::ALL).title("Dumps"))
+                                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)]);
 
-                                f.render_stateful_widget(table, chunks[0], &mut state);
+                            f.render_stateful_widget(table, chunks[0], &mut state);
 
                                 let preview_widget = RawPreview { text: &preview };
                                 let block = Block::default().borders(Borders::ALL).title("Preview");
                                 let inner = block.inner(chunks[1]);
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
-
-                                // status line
-                                let status_area = outer[1];
-                                let mut status = String::new();
-                                if let Some(sel) = state.selected() {
-                                    let title_full = &entries[sel].1;
-                                    let size_str = &entries[sel].2;
-                                    let total_w = status_area.width as usize;
-                                    let size_w = UnicodeWidthStr::width(size_str.as_str());
-                                    let title_max = total_w.saturating_sub(size_w + 1);
-                                    let mut title_disp = title_full.clone();
-                                    if UnicodeWidthStr::width(title_disp.as_str()) > title_max {
-                                        let mut acc = String::new();
-                                        let mut cur_w = 0usize;
-                                        for ch in title_disp.chars() {
-                                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                                            if cur_w + cw > title_max { break; }
-                                            acc.push(ch);
-                                            cur_w += cw;
-                                        }
-                                        title_disp = acc;
-                                    }
-                                    status.push_str(&title_disp);
-                                    let cur_w = UnicodeWidthStr::width(status.as_str());
-                                    if total_w > size_w && cur_w < total_w - size_w {
-                                        let pad = total_w - size_w - cur_w;
-                                        status.push_str(&std::iter::repeat(' ').take(pad).collect::<String>());
-                                    }
-                                    status.push_str(size_str);
-                                }
-                                let status_par = Paragraph::new(status).block(Block::default().borders(Borders::TOP));
-                                f.render_widget(status_par, status_area);
                             });
                         }
                     }

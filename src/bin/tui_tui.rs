@@ -87,12 +87,14 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
 
-        let title = if let Some(idx) = fname.find('_') {
-            let mut t = fname[idx + 1..].to_string();
-            if t.ends_with(".json") {
-                t.truncate(t.len() - 5);
-            }
-            if t.is_empty() { "".to_string() } else { t }
+        // filename format: [title]_[id].json -> extract title as everything before the last '_'
+        let mut base = fname.clone();
+        if base.ends_with(".json") {
+            base.truncate(base.len() - 5);
+        }
+        let title = if let Some(idx) = base.rfind('_') {
+            let t = &base[..idx];
+            if t.is_empty() { "".to_string() } else { t.to_string() }
         } else {
             "".to_string()
         };
@@ -121,12 +123,14 @@ fn build_entry_from_path(path: &std::path::Path) -> Option<((String, String, Str
     let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ts = DateTime::<Local>::from(mtime).format("%Y-%m-%d %H:%M:%S").to_string();
 
-    let title = if let Some(idx) = fname.find('_') {
-        let mut t = fname[idx + 1..].to_string();
-        if t.ends_with(".json") {
-            t.truncate(t.len() - 5);
-        }
-        if t.is_empty() { "".to_string() } else { t }
+    // extract title from filename [title]_[id].json
+    let mut base = fname.clone();
+    if base.ends_with(".json") {
+        base.truncate(base.len() - 5);
+    }
+    let title = if let Some(idx) = base.rfind('_') {
+        let t = &base[..idx];
+        if t.is_empty() { "".to_string() } else { t.to_string() }
     } else {
         "".to_string()
     };
@@ -395,13 +399,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
 
-        // derive title from filename: <timestamp>_<title>.json or empty
-        let title = if let Some(idx) = fname.find('_') {
-            let mut t = fname[idx + 1..].to_string();
-            if t.ends_with(".json") {
-                t.truncate(t.len() - 5);
-            }
-            if t.is_empty() { "".to_string() } else { t }
+        // derive title from filename format: [title]_[id].json
+        let mut base = fname.clone();
+        if base.ends_with(".json") {
+            base.truncate(base.len() - 5);
+        }
+        let title = if let Some(idx) = base.rfind('_') {
+            let t = &base[..idx];
+            if t.is_empty() { "".to_string() } else { t.to_string() }
         } else {
             "".to_string()
         };

@@ -5,9 +5,27 @@ use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlte
 use crossterm::event::{Event as CEvent, KeyCode};
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
-use tui::widgets::{Block, Borders, List, ListItem};
+use tui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use tui::layout::{Layout, Constraint, Direction};
+use tui::style::{Style, Modifier};
+use tui::text::Span;
 use tui::widgets::ListState;
+
+fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
+    // Read up to 64KB for preview and pretty-print JSON if possible
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = String::new();
+    let _ = f.take(64 * 1024).read_to_string(&mut buf);
+
+    // Try to pretty-print JSON
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
+        let pretty = serde_json::to_string_pretty(&json)?;
+        return Ok(pretty);
+    }
+
+    // Fallback: return raw (trimmed)
+    Ok(buf)
+}
 
 fn human_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
@@ -69,19 +87,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = ListState::default();
     state.select(Some(0));
 
+    // initial preview for selected item
+    let mut preview = String::new();
+    if let Some(p) = paths.get(0) {
+        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+    }
+
     // render loop
     let mut selected_path: Option<std::path::PathBuf> = None;
     loop {
         terminal.draw(|f| {
             let size = f.size();
             let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(100)].as_ref())
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(size);
 
             let mut list = List::new(items.clone()).block(Block::default().borders(Borders::ALL).title("Dumps"));
             list = list.highlight_symbol("» ");
             f.render_stateful_widget(list, chunks[0], &mut state);
+
+            let paragraph = Paragraph::new(preview.clone())
+                .block(Block::default().borders(Borders::ALL).title("Preview"))
+                .wrap(Wrap { trim: true });
+            f.render_widget(paragraph, chunks[1]);
         })?;
 
         // handle input
@@ -95,12 +124,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let len = items.len();
                             let ni = if i == 0 { len - 1 } else { i - 1 };
                             state.select(Some(ni));
+                            if let Some(p) = paths.get(ni) {
+                                preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                            }
                         }
                     }
                     KeyCode::Down => {
                         if let Some(i) = state.selected() {
                             let ni = (i + 1) % items.len();
                             state.select(Some(ni));
+                            if let Some(p) = paths.get(ni) {
+                                preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                            }
                         }
                     }
                     KeyCode::Enter => {

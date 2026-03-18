@@ -18,3 +18,4 @@ hyper = { version = "1", features = ["server"] }
 tui = "0.19"
 crossterm = "0.26"
 signal-hook = "0.3"
+nix = "0.27"

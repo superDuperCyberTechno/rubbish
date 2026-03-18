@@ -211,8 +211,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (fs_tx, fs_rx) = std::sync::mpsc::channel::<WatchEvent>();
     let watch_dir = dumps_dir.clone();
 
-    // notify-based watcher (compiled only when feature `use_notify` is enabled)
-    #[cfg(feature = "use_notify")]
+    // Start a notify-based watcher. Translate notify events into WatchEvent values and send them
+    // to the TUI thread. If notify fails at runtime, spawn a polling fallback.
     {
         let tx = fs_tx.clone();
         let watch_dir2 = watch_dir.clone();
@@ -226,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 watcher.watch(&watch_dir2, RecursiveMode::NonRecursive)?;
 
                 loop {
-                match rx.recv_timeout(Duration::from_secs(1)) {
+                    match rx.recv_timeout(Duration::from_secs(1)) {
                         Ok(Ok(ev)) => {
                             for _p in ev.paths.iter() {
                                 let we = match &ev.kind {
@@ -243,55 +243,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = tx.send(WatchEvent::Rescan);
                         }
                         Err(RecvTimeoutError::Timeout) => continue,
-                        Err(_) => break Ok(()),
+                        Err(_) => break,
                     }
                 }
 
-                // ok
-                // unreachable normally
-                // Ok(())
+                Ok(())
             })() {
                 eprintln!("notify-based watcher failed: {} - falling back to polling", e);
-            }
-        });
-    }
 
-    // polling fallback watcher (compiled when notify feature is not enabled)
-    #[cfg(not(feature = "use_notify"))]
-    {
-        let tx = fs_tx.clone();
-        let watch_dir2 = watch_dir.clone();
-        thread::spawn(move || {
-            let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
-            loop {
-                let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();
-                if let Ok(rd) = std::fs::read_dir(&watch_dir2) {
-                    for e in rd.filter_map(|e| e.ok()) {
-                        let p = e.path();
-                        if p.is_file() {
-                            if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
-                                current.insert(p.to_string_lossy().to_string(), m);
+                // Fallback polling implementation in case notify fails at runtime
+                let tx2 = tx.clone();
+                let watch_dir3 = watch_dir2.clone();
+                std::thread::spawn(move || {
+                    let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
+                    loop {
+                        let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();
+                        if let Ok(rd) = std::fs::read_dir(&watch_dir3) {
+                            for e in rd.filter_map(|e| e.ok()) {
+                                let p = e.path();
+                                if p.is_file() {
+                                    if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                                        current.insert(p.to_string_lossy().to_string(), m);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-                if current != last {
-                    // determine created/removed/modified by comparing maps
-                    for (k, m) in current.iter() {
-                        if !last.contains_key(k) {
-                            let _ = tx.send(WatchEvent::Created(PathBuf::from(k)));
-                        } else if last.get(k).map(|t| t != m).unwrap_or(false) {
-                            let _ = tx.send(WatchEvent::Modified(PathBuf::from(k)));
+                        if current != last {
+                            for (k, m) in current.iter() {
+                                if !last.contains_key(k) {
+                                    let _ = tx2.send(WatchEvent::Created(()));
+                                } else if last.get(k).map(|t| t != m).unwrap_or(false) {
+                                    let _ = tx2.send(WatchEvent::Modified(()));
+                                }
+                            }
+                            for k in last.keys() {
+                                if !current.contains_key(k) {
+                                    let _ = tx2.send(WatchEvent::Removed(()));
+                                }
+                            }
+                            last = current;
                         }
+                        std::thread::sleep(Duration::from_secs(1));
                     }
-                    for k in last.keys() {
-                        if !current.contains_key(k) {
-                            let _ = tx.send(WatchEvent::Removed(PathBuf::from(k)));
-                        }
-                    }
-                    last = current;
-                }
-                std::thread::sleep(Duration::from_secs(1));
+                });
             }
         });
     }

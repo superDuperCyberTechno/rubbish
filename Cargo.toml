@@ -18,10 +18,7 @@ tui = "0.19"
 crossterm = "0.26"
 signal-hook = "0.3"
 libc = "0.2"
-notify = { version = "5", optional = true }
-
-[features]
-use_notify = ["notify"]
+notify = "5"
 
 [[bin]]
 name = "tui"

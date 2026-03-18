@@ -49,6 +49,52 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>) {
+    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
+    if let Ok(rd) = fs::read_dir(dumps_dir) {
+        files = rd
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                let path = e.path();
+                if !path.is_file() {
+                    return None;
+                }
+                let meta = path.metadata().ok();
+                let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                Some((path, mtime, size))
+            })
+            .filter_map(|x| x)
+            .collect();
+    }
+
+    files.sort_by_key(|(_, mtime, _)| mtime.unwrap_or(SystemTime::UNIX_EPOCH));
+    files.reverse();
+
+    let mut entries: Vec<(String, String, String)> = Vec::new();
+    let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    for (path, mtime, size) in files.iter() {
+        let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
+
+        let title = if let Some(idx) = fname.find('_') {
+            let mut t = fname[idx + 1..].to_string();
+            if t.ends_with(".json") {
+                t.truncate(t.len() - 5);
+            }
+            if t.is_empty() { "(no title)".to_string() } else { t }
+        } else {
+            "(no title)".to_string()
+        };
+
+        let size_str = human_size(*size);
+        entries.push((ts, title, size_str));
+        paths.push(path.clone());
+    }
+
+    (entries, paths)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start the server if it's not already running on localhost:7771
     let server_addr: SocketAddr = "127.0.0.1:7771".parse().unwrap();
@@ -152,9 +198,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // filesystem watcher: notify main thread when dumps_dir content changes
+    // Replace polling with notify crate (recommended). If notify isn't available, fall back to polling.
     let (fs_tx, _fs_rx) = std::sync::mpsc::channel();
     let watch_dir = dumps_dir.clone();
+    // Try to spawn a notify-based watcher; if the crate is not available at runtime, fallback to polling.
     thread::spawn(move || {
+        // attempt dynamic watcher using the `notify` crate; if building fails, fallback to simple polling
+        if cfg!(feature = "use_notify") {
+            // This branch requires the `notify` crate enabled via Cargo.toml and a feature flag.
+            if let Err(e) = (|| -> Result<(), Box<dyn std::error::Error>> {
+                use notify::{Watcher, RecursiveMode, RecommendedWatcher};
+                use std::sync::mpsc::RecvTimeoutError;
+
+                let (tx, rx) = std::sync::mpsc::channel();
+                let mut watcher: RecommendedWatcher = RecommendedWatcher::new(tx, notify::Config::default())?;
+                watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+
+                loop {
+                    match rx.recv_timeout(Duration::from_secs(1)) {
+                        Ok(_ev) => { let _ = fs_tx.send(()); }
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(_) => break,
+                    }
+                }
+                Ok(())
+            })() {
+                eprintln!("notify-based watcher failed: {} - falling back to polling", e);
+            } else {
+                return;
+            }
+        }
+
+        // Fallback polling implementation
         let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
         loop {
             let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();

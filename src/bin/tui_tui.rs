@@ -689,3 +689,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    #[test]
+    fn test_human_size_basic() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1024), "1.0 KiB");
+        assert_eq!(human_size(1536), "1.5 KiB");
+        assert_eq!(human_size(1024 * 1024), "1.0 MiB");
+        assert_eq!(human_size(1024_u64.pow(3)), "1.0 GiB");
+    }
+
+    #[test]
+    fn test_build_entry_from_path_extracts_title_and_size() {
+        // create a temporary file in the system temp dir
+        let mut path = std::env::temp_dir();
+        let fname = format!("2026-03-18_test-title-{}_.json", uuid::Uuid::new_v4());
+        path.push(fname);
+
+        let data = b"{\"x\":1}\n";
+        {
+            let mut f = fs::File::create(&path).expect("create temp file");
+            f.write_all(data).expect("write data");
+        }
+
+        // ensure file metadata is available
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let res = build_entry_from_path(&path).expect("should build entry");
+        let ((ts, title, size_str), _mtime) = res;
+
+        // title should match (stripping .json and underscore logic)
+        assert!(title.contains("test-title"));
+        // size_str should reflect the bytes we wrote (small -> bytes)
+        assert!(size_str.ends_with("B") || size_str.contains("KiB"));
+        // ts should be a non-empty timestamp string
+        assert!(!ts.is_empty());
+
+        // cleanup
+        let _ = fs::remove_file(&path);
+    }
+}

@@ -2,6 +2,10 @@ use std::io::{self, Read};
 use std::{fs, process::Command, time::SystemTime, time::Duration};
 use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};
+use signal_hook::consts::signal::*;
+use signal_hook::iterator::Signals;
+use std::sync::mpsc::{channel, Sender};
+use std::thread;
 use crossterm::event::{Event as CEvent, KeyCode};
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
@@ -91,6 +95,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
     }
 
+    // Setup signal handling to gracefully exit and restore terminal
+    let (sig_tx, sig_rx) = channel();
+    let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).unwrap();
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            // send the signal number to the main thread
+            let _ = sig_tx.send(sig);
+        }
+    });
+
     // render loop
     let mut selected_path: Option<std::path::PathBuf> = None;
     loop {
@@ -111,7 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(paragraph, chunks[1]);
         })?;
 
-        // handle input
+        // handle input or signals
         if event::poll(Duration::from_millis(200))? {
             if let CEvent::Key(key) = event::read()? {
                 match key.code {
@@ -175,6 +189,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 }
             }
+        }
+
+        // check for signals
+        if let Ok(sig) = sig_rx.try_recv() {
+            // on signal, break loop and restore terminal
+            eprintln!("received signal {} - exiting", sig);
+            break;
         }
     }
 

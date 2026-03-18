@@ -602,23 +602,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         terminal.draw(|f| {
             let size = f.size();
+            // outer vertical split to reserve one line for status
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+                .split(size);
+
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                .split(size);
+                .split(outer[0]);
 
-            // Render a table with three columns: timestamp | title | size
+            // Render a table with two columns: timestamp | title
             let rows: Vec<Row> = entries
                 .iter()
-                .map(|(ts, title, size_str)| {
+                .map(|(ts, title, _)| {
                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
                 })
                 .collect();
 
             let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)])
+                .widths(&[Constraint::Length(19), Constraint::Min(10)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
@@ -629,15 +635,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 f.render_stateful_widget(table, chunks[0], &mut state);
             }
 
-            // Prevent word-wrap: truncate each line to the available width so the paragraph
-            // displays lines as-is without wrapping to the next line.
-            let avail_width = chunks[1].width as usize;
-            // Use RawPreview to render lines truncated to the available width with no wrapping.
+            // preview
             let preview_widget = RawPreview { text: &preview };
             let block = Block::default().borders(Borders::ALL).title("Preview");
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
+
+            // Status line at bottom: show longer title and right-aligned size
+            let status_area = outer[1];
+            let mut status = String::new();
+            if let Some(sel) = state.selected() {
+                let title_full = &entries[sel].1;
+                let size_str = &entries[sel].2;
+                let total_w = status_area.width as usize;
+                let size_w = UnicodeWidthStr::width(size_str.as_str());
+                let title_max = total_w.saturating_sub(size_w + 1);
+                let mut title_disp = title_full.clone();
+                if UnicodeWidthStr::width(title_disp.as_str()) > title_max {
+                    let mut acc = String::new();
+                    let mut cur_w = 0usize;
+                    for ch in title_disp.chars() {
+                        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                        if cur_w + cw > title_max { break; }
+                        acc.push(ch);
+                        cur_w += cw;
+                    }
+                    title_disp = acc;
+                }
+                status.push_str(&title_disp);
+                // pad to align size right
+                let cur_w = UnicodeWidthStr::width(status.as_str());
+                if total_w > size_w && cur_w < total_w - size_w {
+                    let pad = total_w - size_w - cur_w;
+                    status.push_str(&std::iter::repeat(' ').take(pad).collect::<String>());
+                }
+                status.push_str(size_str);
+            }
+            let status_par = Paragraph::new(status).block(Block::default().borders(Borders::TOP));
+            f.render_widget(status_par, status_area);
         })?;
 
         // handle input or signals
@@ -730,32 +766,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             std::thread::sleep(Duration::from_millis(100));
                             let _ = terminal.draw(|f| {
                                 let size = f.size();
+                                let outer = Layout::default()
+                                    .direction(Direction::Vertical)
+                                    .constraints([Constraint::Min(1), Constraint::Length(1)].as_ref())
+                                    .split(size);
+
                                 let chunks = Layout::default()
                                     .direction(Direction::Horizontal)
                                     .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                                    .split(size);
+                                    .split(outer[0]);
 
-                            // rebuild and render the Table for redraw
-                            let rows: Vec<Row> = entries
-                                .iter()
-                                .map(|(ts, title, size_str)| {
-                                    let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
-                                })
-                                .collect();
+                                // rebuild and render the Table for redraw (timestamp | title)
+                                let rows: Vec<Row> = entries
+                                    .iter()
+                                    .map(|(ts, title, _)| {
+                                        let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
+                                        Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
+                                    })
+                                    .collect();
 
-                            let table = Table::new(rows)
-                                .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)]);
+                                let table = Table::new(rows)
+                                    .block(Block::default().borders(Borders::ALL).title("Dumps"))
+                                    .widths(&[Constraint::Length(19), Constraint::Min(10)]);
 
-                            f.render_stateful_widget(table, chunks[0], &mut state);
+                                f.render_stateful_widget(table, chunks[0], &mut state);
 
-                                let avail_width = chunks[1].width as usize;
                                 let preview_widget = RawPreview { text: &preview };
                                 let block = Block::default().borders(Borders::ALL).title("Preview");
                                 let inner = block.inner(chunks[1]);
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
+
+                                // status line
+                                let status_area = outer[1];
+                                let mut status = String::new();
+                                if let Some(sel) = state.selected() {
+                                    let title_full = &entries[sel].1;
+                                    let size_str = &entries[sel].2;
+                                    let total_w = status_area.width as usize;
+                                    let size_w = UnicodeWidthStr::width(size_str.as_str());
+                                    let title_max = total_w.saturating_sub(size_w + 1);
+                                    let mut title_disp = title_full.clone();
+                                    if UnicodeWidthStr::width(title_disp.as_str()) > title_max {
+                                        let mut acc = String::new();
+                                        let mut cur_w = 0usize;
+                                        for ch in title_disp.chars() {
+                                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                                            if cur_w + cw > title_max { break; }
+                                            acc.push(ch);
+                                            cur_w += cw;
+                                        }
+                                        title_disp = acc;
+                                    }
+                                    status.push_str(&title_disp);
+                                    let cur_w = UnicodeWidthStr::width(status.as_str());
+                                    if total_w > size_w && cur_w < total_w - size_w {
+                                        let pad = total_w - size_w - cur_w;
+                                        status.push_str(&std::iter::repeat(' ').take(pad).collect::<String>());
+                                    }
+                                    status.push_str(size_str);
+                                }
+                                let status_par = Paragraph::new(status).block(Block::default().borders(Borders::TOP));
+                                f.render_widget(status_par, status_area);
                             });
                         }
                     }

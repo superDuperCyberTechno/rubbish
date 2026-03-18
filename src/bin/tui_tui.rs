@@ -1,5 +1,6 @@
 use std::io::{self, Read};
-use std::{fs, process::Command, time::SystemTime, time::Duration};
+use std::{fs, process::Command, time::SystemTime, time::Duration, env};
+use std::path::PathBuf;
 use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};
 use signal_hook::consts::signal::*;
@@ -46,8 +47,17 @@ fn human_size(bytes: u64) -> String {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // determine dumps directory (XDG_DATA_HOME/rubbish/dumps or ~/.local/share/rubbish/dumps)
+    let dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") {
+        Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"),
+        _ => match env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("dumps"),
+            Err(_) => PathBuf::from("./dumps"),
+        },
+    };
+
     // collect files with metadata and sort by modified time (newest first)
-    let rd = fs::read_dir("dumps")?;
+    let rd = fs::read_dir(&dumps_dir)?;
     let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = rd
         .filter_map(|e| e.ok())
         .map(|e| {
@@ -102,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
-        println!("Dumps:");
+        println!("Dumps (from {}):", dumps_dir.display());
         for (i, (ts, title, size_str)) in entries.iter().enumerate() {
             println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() }, size_str);
         }

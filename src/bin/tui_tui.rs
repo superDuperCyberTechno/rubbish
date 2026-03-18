@@ -382,7 +382,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
 
             let table = Table::new(rows)
-                .header(Row::new(vec![Cell::from("Timestamp"), Cell::from("Title"), Cell::from("Size")]))
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
                 .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(12)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
@@ -506,7 +505,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .collect();
 
                             let table = Table::new(rows)
-                                .header(Row::new(vec![Cell::from("Timestamp"), Cell::from("Title"), Cell::from("Size")]))
                                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
                                 .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(10)]);
 

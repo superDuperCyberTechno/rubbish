@@ -591,7 +591,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let paragraph = Paragraph::new(preview.clone())
                 .block(Block::default().borders(Borders::ALL).title("Preview"))
-                .wrap(Wrap { trim: true });
+                .wrap(Wrap { trim: false });
             f.render_widget(paragraph, chunks[1]);
         })?;
 
@@ -707,7 +707,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let paragraph = Paragraph::new(preview.clone())
                                     .block(Block::default().borders(Borders::ALL).title("Preview"))
-                                    .wrap(Wrap { trim: true });
+                                    .wrap(Wrap { trim: false });
                                 f.render_widget(paragraph, chunks[1]);
                             });
                         }

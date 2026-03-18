@@ -208,7 +208,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // refresh preview for current selection
                             preview = read_preview(&path).unwrap_or_else(|e| format!("failed to read preview: {}", e));
 
-                            // Immediately redraw the TUI so the screen is restored after the pager exits
+                            // Small delay to allow terminal to settle, then redraw the TUI so the screen is restored
+                            std::thread::sleep(Duration::from_millis(100));
                             let _ = terminal.draw(|f| {
                                 let size = f.size();
                                 let chunks = Layout::default()

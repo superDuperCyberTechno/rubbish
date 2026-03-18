@@ -76,7 +76,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
-        let line = format!("{}  —  {}  ({})", fname, ts, human_size(*size));
+
+        // derive title from filename: <timestamp>_<title>.json or empty
+        let title = if let Some(idx) = fname.find('_') {
+            let mut t = fname[idx + 1..].to_string();
+            if t.ends_with(".json") {
+                t.truncate(t.len() - 5);
+            }
+            if t.is_empty() { "(no title)".to_string() } else { t }
+        } else {
+            "(no title)".to_string()
+        };
+
+        // First row: timestamp + size. Second row: title
+        let line = format!("{} ({})\n{}", ts, human_size(*size), title);
         display.push(line.clone());
         items.push(ListItem::new(line));
         paths.push(path.clone());

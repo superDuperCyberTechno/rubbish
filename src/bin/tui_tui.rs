@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     files.sort_by_key(|(_, mtime, _)| mtime.unwrap_or(SystemTime::UNIX_EPOCH));
     files.reverse();
 
-    let mut items: Vec<ListItem> = Vec::new();
-    let mut display: Vec<String> = Vec::new();
+    // entries: (timestamp, title, size_str)
+    let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut paths = Vec::new();
     for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -88,13 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "(no title)".to_string()
         };
 
-        // single-line with three columns: timestamp | title | size
         let size_str = human_size(*size);
-        // timestamp is fixed width (19), title gets up to 40 chars, size right-aligned
-        let title_trunc = if title.len() > 40 { title.chars().take(37).collect::<String>() + "..." } else { title };
-        let line = format!("{:<19}  {:<40} {:>8}", ts, title_trunc, size_str);
-        display.push(line.clone());
-        items.push(ListItem::new(line));
+        entries.push((ts, title, size_str));
         paths.push(path.clone());
     }
 
@@ -107,9 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
         println!("Dumps:");
-        for (i, line) in display.iter().enumerate() {
-            // show index and single-line summary
-            println!("{}: {}", i + 1, line.replace('\n', " — "));
+        for (i, (ts, title, size_str)) in entries.iter().enumerate() {
+            println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() }, size_str);
         }
         println!("\n--- Preview (first item) ---\n");
         println!("{}", preview);
@@ -146,7 +140,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(size);
 
-            let mut list = List::new(items.clone()).block(Block::default().borders(Borders::ALL).title("Dumps"));
+            // build list items dynamically to fit available width
+            let list_width = chunks[0].width as usize;
+            let mut list_items: Vec<ListItem> = Vec::with_capacity(entries.len());
+            for (ts, title, size_str) in entries.iter() {
+                let title_trunc = if title.len() > 40 { title.chars().take(37).collect::<String>() + "..." } else { title.clone() };
+                // adjust title width based on available space: leave 2 spaces between columns
+                let ts_w = 19usize;
+                let size_w = 8usize;
+                let available = if list_width > ts_w + size_w + 4 { list_width - ts_w - size_w - 4 } else { 0 };
+                let title_disp = if available > 0 && title_trunc.len() > available { title_trunc.chars().take(available - 3).collect::<String>() + "..." } else { title_trunc };
+                let line = format!("{:<19}  {:<width$} {:>8}", ts, title_disp, size_str, width = available);
+                list_items.push(ListItem::new(line));
+            }
+
+            let mut list = List::new(list_items).block(Block::default().borders(Borders::ALL).title("Dumps"));
             list = list.highlight_symbol("» ");
             f.render_stateful_widget(list, chunks[0], &mut state);
 

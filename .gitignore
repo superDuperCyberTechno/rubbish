@@ -1,1 +1,3 @@
-/target
+target/
+dumps/
+**/*.rs.bk

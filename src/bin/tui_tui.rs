@@ -207,6 +207,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             // refresh preview for current selection
                             preview = read_preview(&path).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+
+                            // Immediately redraw the TUI so the screen is restored after the pager exits
+                            let _ = terminal.draw(|f| {
+                                let size = f.size();
+                                let chunks = Layout::default()
+                                    .direction(Direction::Horizontal)
+                                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                                    .split(size);
+
+                                let mut list = List::new(items.clone()).block(Block::default().borders(Borders::ALL).title("Dumps"));
+                                list = list.highlight_symbol("» ");
+                                f.render_stateful_widget(list, chunks[0], &mut state);
+
+                                let paragraph = Paragraph::new(preview.clone())
+                                    .block(Block::default().borders(Borders::ALL).title("Preview"))
+                                    .wrap(Wrap { trim: true });
+                                f.render_widget(paragraph, chunks[1]);
+                            });
                         }
                     }
                     _ => {}

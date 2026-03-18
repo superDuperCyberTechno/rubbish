@@ -101,11 +101,167 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
     (entries, paths)
 }
 
+fn get_mtime(path: &std::path::Path) -> Option<SystemTime> {
+    path.metadata().and_then(|m| m.modified()).ok()
+}
+
+// Build display entry (timestamp, title, size_str) and return mtime for sorting.
+fn build_entry_from_path(path: &std::path::Path) -> Option<((String, String, String), SystemTime)> {
+    if !path.is_file() {
+        return None;
+    }
+    let meta = path.metadata().ok()?;
+    let mtime = meta.modified().ok()?;
+    let size = meta.len();
+
+    let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ts = DateTime::<Local>::from(mtime).format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let title = if let Some(idx) = fname.find('_') {
+        let mut t = fname[idx + 1..].to_string();
+        if t.ends_with(".json") {
+            t.truncate(t.len() - 5);
+        }
+        if t.is_empty() { "".to_string() } else { t }
+    } else {
+        "".to_string()
+    };
+
+    let size_str = human_size(size);
+    Some(((ts, title, size_str), mtime))
+}
+
+fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, state: &mut TableState, preview: &mut String) {
+    match ev {
+        WatchEvent::Rescan => {
+            let (new_entries, new_paths) = scan_dumps(dumps_dir);
+            *entries = new_entries;
+            *paths = new_paths;
+            if entries.is_empty() {
+                *preview = "(no preview available)".to_string();
+                state.select(None);
+            } else {
+                // ensure selection is valid
+                match state.selected() {
+                    Some(i) if i < entries.len() => {
+                        if let Some(p) = paths.get(i) {
+                            *preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                        }
+                    }
+                    _ => {
+                        state.select(Some(0));
+                        if let Some(p) = paths.get(0) {
+                            *preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+        WatchEvent::Created(p) | WatchEvent::Modified(p) => {
+            // ignore events outside the dumps dir
+            if !p.starts_with(dumps_dir) {
+                return;
+            }
+
+            // if file exists, build entry
+            if let Some((entry, mtime)) = build_entry_from_path(&p) {
+                // find if path already exists in our list
+                if let Some(pos) = paths.iter().position(|x| x == &p) {
+                    // update existing entry
+                    entries[pos] = entry;
+                    // if this is the selected item, refresh preview
+                    if state.selected() == Some(pos) {
+                        *preview = read_preview(&p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                    }
+                } else {
+                    // determine insertion index based on mtime (newest first)
+                    let mut inserted = false;
+                    for (i, existing) in paths.iter().enumerate() {
+                        let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        if mtime > emtime {
+                            paths.insert(i, p.clone());
+                            entries.insert(i, entry);
+                            // if we inserted before the selected index, shift selection down to keep same item
+                            if let Some(sel) = state.selected() {
+                                if i <= sel {
+                                    state.select(Some(sel + 1));
+                                }
+                            }
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if !inserted {
+                        paths.push(p.clone());
+                        entries.push(entry);
+                    }
+                    // if nothing selected, select the first item
+                    if state.selected().is_none() {
+                        state.select(Some(0));
+                        if let Some(first) = paths.get(0) {
+                            *preview = read_preview(first).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                        }
+                    }
+                }
+            } else {
+                // file missing or unreadable -> remove if present
+                if let Some(pos) = paths.iter().position(|x| x == &p) {
+                    paths.remove(pos);
+                    entries.remove(pos);
+                    // adjust selection
+                    match state.selected() {
+                        Some(sel) if sel == pos => {
+                            if entries.is_empty() {
+                                state.select(None);
+                                *preview = "(no preview available)".to_string();
+                            } else {
+                                let new_sel = if pos == 0 { 0 } else { pos - 1 };
+                                state.select(Some(new_sel));
+                                if let Some(p2) = paths.get(new_sel) {
+                                    *preview = read_preview(p2).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                }
+                            }
+                        }
+                        Some(sel) if sel > pos => {
+                            state.select(Some(sel - 1));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        WatchEvent::Removed(p) => {
+            if let Some(pos) = paths.iter().position(|x| x == &p) {
+                paths.remove(pos);
+                entries.remove(pos);
+                match state.selected() {
+                    Some(sel) if sel == pos => {
+                        if entries.is_empty() {
+                            state.select(None);
+                            *preview = "(no preview available)".to_string();
+                        } else {
+                            let new_sel = if pos == 0 { 0 } else { pos - 1 };
+                            state.select(Some(new_sel));
+                            if let Some(p2) = paths.get(new_sel) {
+                                *preview = read_preview(p2).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                            }
+                        }
+                    }
+                    Some(sel) if sel > pos => {
+                        state.select(Some(sel - 1));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 enum WatchEvent {
-    Created(()),
-    Modified(()),
-    Removed(()),
+    Created(std::path::PathBuf),
+    Modified(std::path::PathBuf),
+    Removed(std::path::PathBuf),
     Rescan,
 }
 
@@ -233,11 +389,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                     match rx.recv_timeout(Duration::from_secs(1)) {
                         Ok(Ok(ev)) => {
-                            for _p in ev.paths.iter() {
+                            for p in ev.paths.iter() {
                                 let we = match &ev.kind {
-                                    EventKind::Create(_) => WatchEvent::Created(()),
-                                    EventKind::Modify(_) => WatchEvent::Modified(()),
-                                    EventKind::Remove(_) => WatchEvent::Removed(()),
+                                    EventKind::Create(_) => WatchEvent::Created(p.clone()),
+                                    EventKind::Modify(_) => WatchEvent::Modified(p.clone()),
+                                    EventKind::Remove(_) => WatchEvent::Removed(p.clone()),
                                     _ => WatchEvent::Rescan,
                                 };
                                 let _ = tx.send(we);
@@ -276,14 +432,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if current != last {
                             for (k, m) in current.iter() {
                                 if !last.contains_key(k) {
-                                    let _ = tx2.send(WatchEvent::Created(()));
+                                    let _ = tx2.send(WatchEvent::Created(std::path::PathBuf::from(k)));
                                 } else if last.get(k).map(|t| t != m).unwrap_or(false) {
-                                    let _ = tx2.send(WatchEvent::Modified(()));
+                                    let _ = tx2.send(WatchEvent::Modified(std::path::PathBuf::from(k)));
                                 }
                             }
                             for k in last.keys() {
                                 if !current.contains_key(k) {
-                                    let _ = tx2.send(WatchEvent::Removed(()));
+                                    let _ = tx2.send(WatchEvent::Removed(std::path::PathBuf::from(k)));
                                 }
                             }
                             last = current;
@@ -388,13 +544,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .map(|(ts, title, size_str)| {
                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(size_str.clone())])
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(format!("{:>12}", size_str.clone()))])
                 })
                 .collect();
 
             let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(12)])
+                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
@@ -511,13 +667,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .iter()
                                 .map(|(ts, title, size_str)| {
                                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(size_str.clone())])
+                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(format!("{:>12}", size_str.clone()))])
                                 })
                                 .collect();
 
                             let table = Table::new(rows)
                                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(10)]);
+                                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)]);
 
                             f.render_stateful_widget(table, chunks[0], &mut state);
 

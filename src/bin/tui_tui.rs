@@ -1,4 +1,5 @@
 use std::io;
+use std::io::Read;
 use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ use tui::widgets::TableState;
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and pretty-print JSON if possible
     let f = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(f);
+    let reader = std::io::BufReader::new(f);
     let mut buf = String::new();
     reader.take(64 * 1024).read_to_string(&mut buf)?;
 
@@ -92,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // collect files with metadata and sort by modified time (newest first)
-    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
+    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)>;
     if let Ok(rd) = fs::read_dir(&dumps_dir) {
         files = rd
             .filter_map(|e| e.ok())
@@ -151,7 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // filesystem watcher: notify main thread when dumps_dir content changes
-    let (fs_tx, fs_rx) = std::sync::mpsc::channel();
+    let (fs_tx, _fs_rx) = std::sync::mpsc::channel();
     let watch_dir = dumps_dir.clone();
     thread::spawn(move || {
         let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();

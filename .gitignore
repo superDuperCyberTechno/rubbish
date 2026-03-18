@@ -1,3 +1,5 @@
 target/
 dumps/
 **/*.rs.bk
+*.log
+*.pid

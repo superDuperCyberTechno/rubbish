@@ -97,9 +97,10 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
 }
 
 #[derive(Debug)]
-    Created(PathBuf),
-    Modified(PathBuf),
-    Removed(PathBuf),
+enum WatchEvent {
+    Created(()),
+    Modified(()),
+    Removed(()),
     Rescan,
 }
 
@@ -227,11 +228,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 loop {
                 match rx.recv_timeout(Duration::from_secs(1)) {
                         Ok(Ok(ev)) => {
-                            for p in ev.paths.iter() {
+                            for _p in ev.paths.iter() {
                                 let we = match &ev.kind {
-                                    EventKind::Create(_) => WatchEvent::Created(p.clone()),
-                                    EventKind::Modify(_) => WatchEvent::Modified(p.clone()),
-                                    EventKind::Remove(_) => WatchEvent::Removed(p.clone()),
+                                    EventKind::Create(_) => WatchEvent::Created(()),
+                                    EventKind::Modify(_) => WatchEvent::Modified(()),
+                                    EventKind::Remove(_) => WatchEvent::Removed(()),
                                     _ => WatchEvent::Rescan,
                                 };
                                 let _ = tx.send(we);
@@ -343,7 +344,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // handle filesystem events (non-blocking) and refresh entries/paths/preview
         if let Ok(ev) = fs_rx.try_recv() {
-            match ev {
+                match ev {
                 WatchEvent::Created(_) | WatchEvent::Modified(_) | WatchEvent::Removed(_) | WatchEvent::Rescan => {
                     let (new_entries, new_paths) = scan_dumps(&dumps_dir);
                     entries = new_entries;

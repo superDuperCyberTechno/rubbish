@@ -279,10 +279,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start the server as a child process owned by the TUI so it stops when the TUI exits.
     // Prefer a compiled binary in target/debug, otherwise use `cargo run --bin rubbish`.
     let server_child: Option<std::process::Child> = {
+        // Try to open a server log file for stdout/stderr capture. Fall back to null if unavailable.
+        let log_path = "server.log";
+        let (stdout_dest, stderr_dest) = match fs::OpenOptions::new().create(true).append(true).open(log_path) {
+            Ok(f) => match f.try_clone() {
+                Ok(f2) => {
+                    eprintln!("server logs -> {}", log_path);
+                    (Stdio::from(f), Stdio::from(f2))
+                }
+                Err(_) => {
+                    eprintln!("warning: failed to clone server log file; disabling logging");
+                    (Stdio::null(), Stdio::null())
+                }
+            },
+            Err(_) => {
+                eprintln!("warning: failed to open server log file '{}'; logging disabled", log_path);
+                (Stdio::null(), Stdio::null())
+            }
+        };
+
         let server_spawn = if std::path::Path::new("target/debug/rubbish").exists() {
-            Command::new("./target/debug/rubbish").stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+            Command::new("./target/debug/rubbish").stdout(stdout_dest).stderr(stderr_dest).spawn()
         } else {
-            Command::new("cargo").args(["run","--bin","rubbish"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+            Command::new("cargo").args(["run","--bin","rubbish"]).stdout(stdout_dest).stderr(stderr_dest).spawn()
         };
 
         let res = match server_spawn {

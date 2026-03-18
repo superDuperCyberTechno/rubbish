@@ -302,13 +302,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut server_spawn = Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no candidate tried"));
         for c in &candidates {
             let cmd = std::path::Path::new(c);
-            if cmd.exists() {
-                server_spawn = Command::new(c).stdout(stdout_dest.try_clone().unwrap_or(Stdio::null())).stderr(stderr_dest.try_clone().unwrap_or(Stdio::null())).spawn();
-                if server_spawn.is_ok() { break; }
+            if !cmd.exists() {
+                continue;
             }
+            // open fresh log file handles for each spawn attempt
+            match fs::OpenOptions::new().create(true).append(true).open(log_path) {
+                Ok(f1) => {
+                    match f1.try_clone() {
+                        Ok(f2) => {
+                            server_spawn = Command::new(c).stdout(Stdio::from(f1)).stderr(Stdio::from(f2)).spawn();
+                        }
+                        Err(_) => {
+                            server_spawn = Command::new(c).stdout(Stdio::from(f1)).stderr(Stdio::null()).spawn();
+                        }
+                    }
+                }
+                Err(_) => {
+                    server_spawn = Command::new(c).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+                }
+            }
+            if server_spawn.is_ok() { break; }
         }
         if server_spawn.is_err() {
-            // final fallback: use `cargo run --bin rubbish`
+            // final fallback: use `cargo run --bin rubbish` and attach the prepared dests
             server_spawn = Command::new("cargo").args(["run","--bin","rubbish"]).stdout(stdout_dest).stderr(stderr_dest).spawn();
         }
 

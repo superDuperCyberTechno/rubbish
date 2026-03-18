@@ -1,5 +1,6 @@
 use std::io::{self, Read};
-use std::{fs, process::Command, time::SystemTime, time::Duration, env};
+use std::{fs, process::{Command, Stdio}, time::SystemTime, time::Duration, env};
+use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};
@@ -47,6 +48,29 @@ fn human_size(bytes: u64) -> String {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // start the server if it's not already running on localhost:7771
+    let server_addr: SocketAddr = "127.0.0.1:7771".parse().unwrap();
+    let server_up = TcpStream::connect_timeout(&server_addr, Duration::from_millis(200)).is_ok();
+    if !server_up {
+        // try to use compiled binary if present, otherwise fall back to `cargo run --bin rubbish`
+        let server_spawn = if std::path::Path::new("target/debug/rubbish").exists() {
+            Command::new("./target/debug/rubbish").stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+        } else {
+            Command::new("cargo").args(["run","--bin","rubbish"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+        };
+
+        match server_spawn {
+            Ok(child) => {
+                eprintln!("started rubbish server (pid={})", child.id());
+            }
+            Err(e) => {
+                eprintln!("failed to start rubbish server: {}", e);
+            }
+        }
+        // give server a moment to bind
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
     // determine dumps directory (XDG_DATA_HOME/rubbish/dumps or ~/.local/share/rubbish/dumps)
     let mut dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") {
         Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"),

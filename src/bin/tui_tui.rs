@@ -513,34 +513,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // render loop
     loop {
-        // handle filesystem events (non-blocking) and refresh entries/paths/preview
+        // handle filesystem events (non-blocking) and apply incremental updates
         if let Ok(ev) = fs_rx.try_recv() {
-                match ev {
-                WatchEvent::Created(_) | WatchEvent::Modified(_) | WatchEvent::Removed(_) | WatchEvent::Rescan => {
-                    let (new_entries, new_paths) = scan_dumps(&dumps_dir);
-                    entries = new_entries;
-                    paths = new_paths;
-                    if entries.is_empty() {
-                        preview = "(no preview available)".to_string();
-                        state.select(None);
-                    } else {
-                        // ensure selection is valid
-                        match state.selected() {
-                            Some(i) if i < entries.len() => {
-                                if let Some(p) = paths.get(i) {
-                                    preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
-                                }
-                            }
-                            _ => {
-                                state.select(Some(0));
-                                if let Some(p) = paths.get(0) {
-                                    preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut state, &mut preview);
         }
         terminal.draw(|f| {
             let size = f.size();

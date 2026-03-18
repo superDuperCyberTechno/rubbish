@@ -37,17 +37,21 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
 }
 
 fn human_size(bytes: u64) -> String {
-    // Use IEC (binary) units: KiB, MiB, GiB (base 1024)
+    // Use IEC (binary) units: KiB, MiB, GiB, TiB, PiB (base 1024)
     const KIB: f64 = 1024.0;
     let b = bytes as f64;
     if b < KIB {
         format!("{} B", bytes)
-    } else if b < KIB * KIB {
+    } else if b < KIB.powi(2) {
         format!("{:.1} KiB", b / KIB)
-    } else if b < KIB * KIB * KIB {
-        format!("{:.1} MiB", b / (KIB * KIB))
+    } else if b < KIB.powi(3) {
+        format!("{:.1} MiB", b / KIB.powi(2))
+    } else if b < KIB.powi(4) {
+        format!("{:.1} GiB", b / KIB.powi(3))
+    } else if b < KIB.powi(5) {
+        format!("{:.1} TiB", b / KIB.powi(4))
     } else {
-        format!("{:.1} GiB", b / (KIB * KIB * KIB))
+        format!("{:.1} PiB", b / KIB.powi(5))
     }
 }
 

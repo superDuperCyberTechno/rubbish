@@ -4,7 +4,7 @@ use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::channel;
 use std::thread;
 use crossterm::event::{Event as CEvent, KeyCode};
 use atty::Stream;
@@ -111,12 +111,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = ListState::default();
     state.select(Some(0));
 
-    // initial preview for selected item
-    let mut preview = String::new();
-    if let Some(p) = paths.get(0) {
-        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
-    }
-
     // Setup signal handling to gracefully exit and restore terminal
     let (sig_tx, sig_rx) = channel();
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).unwrap();
@@ -128,7 +122,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // render loop
-    let mut selected_path: Option<std::path::PathBuf> = None;
     loop {
         terminal.draw(|f| {
             let size = f.size();
@@ -194,9 +187,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = terminal.show_cursor();
 
                             // run pager (blocking) but keep parent able to receive signals and forward them
-                            use std::os::unix::process::CommandExt;
-
-                            let mut child = if pager == "cat" {
+                            let child = if pager == "cat" {
                                 Command::new("cat").arg(&path).spawn()
                             } else {
                                 // spawn pager normally so it keeps the controlling terminal and is interactive
@@ -272,23 +263,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-
-    // If a selection was made, open with pager fallback
-    if let Some(path) = selected_path {
-        let pager = if Command::new("jless").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
-            "jless"
-        } else if Command::new("less").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
-            "less"
-        } else {
-            println!("neither jless nor less found in PATH; printing file contents below:\n");
-            let _ = Command::new("cat").arg(path).status();
-            return Ok(());
-        };
-
-        if let Err(e) = Command::new(pager).arg(path).status() {
-            eprintln!("failed to spawn {}: {}", pager, e);
-        }
-    }
 
     Ok(())
 }

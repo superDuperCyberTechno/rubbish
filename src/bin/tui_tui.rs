@@ -61,7 +61,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match server_spawn {
             Ok(child) => {
-                eprintln!("started rubbish server (pid={})", child.id());
+                let pid = child.id();
+                eprintln!("started rubbish server (pid={})", pid);
+                // try to record pid for later management; ignore errors
+                let _ = std::fs::write("server.pid", format!("{}\n", pid));
             }
             Err(e) => {
                 eprintln!("failed to start rubbish server: {}", e);

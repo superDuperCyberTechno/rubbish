@@ -15,7 +15,9 @@ use std::collections::HashMap;
 use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
-use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell};
+use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell, Widget};
+use tui::buffer::Buffer;
+use tui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 use tui::style::{Style, Modifier};
 use tui::layout::{Layout, Constraint, Direction};
@@ -29,6 +31,38 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
     let mut buf = String::new();
     reader.take(64 * 1024).read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+// A custom widget that renders raw preview text without any wrapping. Each line is truncated
+// to the available width and written directly to the buffer, so there is no word-wrapping.
+struct RawPreview<'a> {
+    text: &'a str,
+}
+
+impl<'a> Widget for RawPreview<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut y = area.y;
+        let max_lines = area.height as usize;
+        let max_width = area.width as usize;
+        for (i, line) in self.text.lines().enumerate() {
+            if i >= max_lines { break; }
+            // normalize tabs
+            let line = line.replace('\t', "    ");
+            // truncate by displayed width (unicode-aware)
+            let mut acc = String::new();
+            let mut cur_w = 0usize;
+            for ch in line.chars() {
+                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                if cur_w + cw > max_width { break; }
+                acc.push(ch);
+                cur_w += cw;
+            }
+            // replace spaces with NBSPs so the paragraph renderer won't re-wrap
+            let out = acc.replace(' ', "\u{00A0}");
+            buf.set_stringn(area.x, y, &out, max_width, Style::default());
+            y += 1;
+        }
+    }
 }
 
 fn human_size(bytes: u64) -> String {
@@ -598,36 +632,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Prevent word-wrap: truncate each line to the available width so the paragraph
             // displays lines as-is without wrapping to the next line.
             let avail_width = chunks[1].width as usize;
-            let preview_display = preview
-                .lines()
-                .map(|l| {
-                    // replace tabs with 4 spaces for consistent measurement
-                    let line = l.replace('\t', "    ");
-                    let w = UnicodeWidthStr::width(line.as_str());
-                    let mut out = if w > avail_width {
-                        // iterate grapheme-safe by chars and collect until width exceeds available
-                        let mut acc = String::new();
-                        let mut cur_w = 0usize;
-                        for ch in line.chars() {
-                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                            if cur_w + cw > avail_width { break; }
-                            acc.push(ch);
-                            cur_w += cw;
-                        }
-                        acc
-                    } else {
-                        line
-                    };
-                    // replace normal spaces with non-breaking spaces to avoid paragraph word-wrapping
-                    out.replace(' ', "\u{00A0}")
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            let paragraph = Paragraph::new(preview_display)
-                .block(Block::default().borders(Borders::ALL).title("Preview"))
-                .wrap(Wrap { trim: false });
-            f.render_widget(paragraph, chunks[1]);
+            // Use RawPreview to render lines truncated to the available width with no wrapping.
+            let preview_widget = RawPreview { text: &preview };
+            let block = Block::default().borders(Borders::ALL).title("Preview");
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
+            f.render_widget(preview_widget, inner);
         })?;
 
         // handle input or signals
@@ -741,33 +751,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             f.render_stateful_widget(table, chunks[0], &mut state);
 
                                 let avail_width = chunks[1].width as usize;
-                                let preview_display = preview
-                                    .lines()
-                                    .map(|l| {
-                                        let line = l.replace('\t', "    ");
-                                        let w = UnicodeWidthStr::width(line.as_str());
-                                        let mut out = if w > avail_width {
-                                            let mut acc = String::new();
-                                            let mut cur_w = 0usize;
-                                            for ch in line.chars() {
-                                                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                                                if cur_w + cw > avail_width { break; }
-                                                acc.push(ch);
-                                                cur_w += cw;
-                                            }
-                                            acc
-                                        } else {
-                                            line
-                                        };
-                                        out.replace(' ', "\u{00A0}")
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-
-                                let paragraph = Paragraph::new(preview_display)
-                                    .block(Block::default().borders(Borders::ALL).title("Preview"))
-                                    .wrap(Wrap { trim: false });
-                                f.render_widget(paragraph, chunks[1]);
+                                let preview_widget = RawPreview { text: &preview };
+                                let block = Block::default().borders(Borders::ALL).title("Preview");
+                                let inner = block.inner(chunks[1]);
+                                f.render_widget(block, chunks[1]);
+                                f.render_widget(preview_widget, inner);
                             });
                         }
                     }

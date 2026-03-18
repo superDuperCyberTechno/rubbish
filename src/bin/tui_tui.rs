@@ -172,17 +172,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = terminal.show_cursor();
 
                             // run pager (blocking) but keep parent able to receive signals and forward them
-                            use nix::sys::signal::{kill, Signal};
-                            use nix::unistd::Pid;
                             use std::os::unix::process::CommandExt;
 
                             let mut child = if pager == "cat" {
                                 Command::new("cat").arg(&path).spawn()
                             } else {
-                                // ensure child is in same process group so signals can be forwarded
+                                // spawn pager in a new session so it doesn't receive terminal signals
                                 let mut c = Command::new(pager);
                                 c.arg(&path);
-                                // setpgid to create new process group for child
                                 unsafe {
                                     c.pre_exec(|| {
                                         // create new session so child has its own pgid
@@ -194,12 +191,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             };
 
                             if let Ok(mut child) = child {
-                                // while child is running, forward any received signals
+                                // while child is running, forward any received signals to the child
                                 loop {
                                     // poll for signals
                                     if let Ok(sig) = sig_rx.try_recv() {
-                                        // forward SIGINT/SIGTERM/SIGQUIT to child pid
-                                        let _ = kill(Pid::from_raw(child.id() as i32), Signal::try_from(sig).unwrap_or(Signal::SIGTERM));
+                                        // translate signal number to libc signal and forward
+                                        unsafe {
+                                            libc::kill(child.id() as i32, sig);
+                                        }
                                     }
                                     match child.try_wait() {
                                         Ok(Some(_)) => break,

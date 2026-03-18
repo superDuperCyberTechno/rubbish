@@ -1,7 +1,7 @@
 use std::io;
 use std::io::Read;
 use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
-use std::net::{SocketAddr, TcpStream};
+// networking imports removed — server is launched as a child owned by the TUI
 use std::path::PathBuf;
 // mpsc types used directly where needed
 use chrono::{DateTime, Local};
@@ -278,28 +278,29 @@ enum WatchEvent {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start the server as a child process owned by the TUI so it stops when the TUI exits.
     // Prefer a compiled binary in target/debug, otherwise use `cargo run --bin rubbish`.
-    let mut server_child: Option<std::process::Child> = None;
-    {
+    let server_child: Option<std::process::Child> = {
         let server_spawn = if std::path::Path::new("target/debug/rubbish").exists() {
             Command::new("./target/debug/rubbish").stdout(Stdio::null()).stderr(Stdio::null()).spawn()
         } else {
             Command::new("cargo").args(["run","--bin","rubbish"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
         };
 
-        match server_spawn {
+        let res = match server_spawn {
             Ok(child) => {
                 let pid = child.id();
                 eprintln!("started rubbish server (pid={})", pid);
-                server_child = Some(child);
+                Some(child)
             }
             Err(e) => {
                 eprintln!("failed to start rubbish server: {}", e);
-                server_child = None;
+                None
             }
-        }
+        };
+
         // give server a moment to bind
         std::thread::sleep(Duration::from_millis(300));
-    }
+        res
+    };
 
     // determine dumps directory (XDG_DATA_HOME/rubbish/dumps or ~/.local/share/rubbish/dumps)
     let mut dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") {

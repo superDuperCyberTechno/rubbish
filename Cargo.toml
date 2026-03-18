@@ -26,3 +26,7 @@ unicode-width = "0.1"
 [[bin]]
 name = "tui"
 path = "src/bin/tui.rs"
+
+[[bin]]
+name = "rubbish"
+path = "src/main.rs"

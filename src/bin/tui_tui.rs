@@ -11,6 +11,7 @@ use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell};
+use tui::style::{Style, Modifier};
 use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
 
@@ -152,9 +153,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let table = Table::new(rows)
                 .header(Row::new(vec![Cell::from("Timestamp"), Cell::from("Title"), Cell::from("Size")]))
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(10)]);
+                .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(12)])
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-            f.render_stateful_widget(table, chunks[0], &mut TableState::default());
+            f.render_stateful_widget(table, chunks[0], &mut state);
 
             let paragraph = Paragraph::new(preview.clone())
                 .block(Block::default().borders(Borders::ALL).title("Preview"))

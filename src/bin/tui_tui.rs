@@ -21,50 +21,18 @@ use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
-    // Prefer to pretty-print the JSON payload. If the file is reasonably small
-    // (<= 200 KiB) read it fully and attempt to parse & pretty-print. For large
-    // files read only a prefix (64 KiB) and fall back to raw text when parsing
-    // fails. In all cases truncate the returned preview to 64 KiB to keep the
-    // TUI responsive.
-    const PREVIEW_LIMIT: usize = 64 * 1024;
-    const FULL_PARSE_LIMIT: u64 = 200 * 1024; // 200 KiB
-
-    let meta = std::fs::metadata(path).ok();
-    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-
-    // Helper to truncate by bytes safely at UTF-8 boundary
-    fn truncate_utf8(s: &str, max_bytes: usize) -> String {
-        if s.len() <= max_bytes {
-            return s.to_string();
-        }
-        let mut end = max_bytes;
-        while !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        s[..end].to_string()
-    }
-
-    if size > 0 && size <= FULL_PARSE_LIMIT {
-        // read full file and try to pretty-print
-        let s = std::fs::read_to_string(path)?;
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&s) {
-            let pretty = serde_json::to_string_pretty(&json)?;
-            return Ok(truncate_utf8(&pretty, PREVIEW_LIMIT));
-        }
-        return Ok(truncate_utf8(&s, PREVIEW_LIMIT));
-    }
-
-    // Large file path: read up to PREVIEW_LIMIT bytes and try to parse that prefix
+    // Read up to 64KB for preview and pretty-print JSON if possible
     let f = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(f);
+    let reader = std::io::BufReader::new(f);
     let mut buf = String::new();
-    reader.take(PREVIEW_LIMIT as u64).read_to_string(&mut buf)?;
+    reader.take(64 * 1024).read_to_string(&mut buf)?;
 
+    // Try to pretty-print JSON
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
-        let pretty = serde_json::to_string_pretty(&json)?;
-        return Ok(truncate_utf8(&pretty, PREVIEW_LIMIT));
+        return Ok(serde_json::to_string_pretty(&json)?);
     }
 
+    // Fallback: return raw (trimmed)
     Ok(buf)
 }
 
@@ -308,11 +276,10 @@ enum WatchEvent {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // start the server if it's not already running on localhost:7771
-    let server_addr: SocketAddr = "127.0.0.1:7771".parse().unwrap();
-    let server_up = TcpStream::connect_timeout(&server_addr, Duration::from_millis(200)).is_ok();
-    if !server_up {
-        // try to use compiled binary if present, otherwise fall back to `cargo run --bin rubbish`
+    // start the server as a child process owned by the TUI so it stops when the TUI exits.
+    // Prefer a compiled binary in target/debug, otherwise use `cargo run --bin rubbish`.
+    let mut server_child: Option<std::process::Child> = None;
+    {
         let server_spawn = if std::path::Path::new("target/debug/rubbish").exists() {
             Command::new("./target/debug/rubbish").stdout(Stdio::null()).stderr(Stdio::null()).spawn()
         } else {
@@ -323,11 +290,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(child) => {
                 let pid = child.id();
                 eprintln!("started rubbish server (pid={})", pid);
-                // try to record pid for later management; ignore errors
-                let _ = std::fs::write("server.pid", format!("{}\n", pid));
+                server_child = Some(child);
             }
             Err(e) => {
                 eprintln!("failed to start rubbish server: {}", e);
+                server_child = None;
             }
         }
         // give server a moment to bind
@@ -718,6 +685,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    // Ensure we stop the server child we spawned so the server is not independent of the TUI.
+    if let Some(mut child) = server_child {
+        // try a graceful shutdown
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     Ok(())
 }

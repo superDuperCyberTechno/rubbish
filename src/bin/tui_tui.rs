@@ -1,4 +1,4 @@
-use std::io::{self};
+use std::io::{self, Read};
 use std::{fs, process::Command, time::SystemTime, time::Duration};
 use chrono::{DateTime, Local};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};

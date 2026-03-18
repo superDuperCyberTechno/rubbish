@@ -13,7 +13,9 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 7771));
     info!(%addr, "starting rubbish dump server");
 
-    let server = axum::server::Server::bind(&addr).serve(app.into_make_service());
+    // axum provides a helper to run the service via hyper; construct the hyper server
+    let svc = app.into_make_service();
+    let server = hyper::Server::bind(&addr).serve(svc);
 
     // Run server until ctrl-c
     tokio::select! {

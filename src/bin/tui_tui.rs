@@ -297,7 +297,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("(no dumps found)");
         } else {
             for (i, (ts, title, size_str)) in entries.iter().enumerate() {
-                println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() }, size_str);
+                let display_title = if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() };
+                if display_title.is_empty() {
+                    // omit the title column when it's empty to avoid extra whitespace
+                    println!("{}: {:<19} {:>8}", i + 1, ts, size_str);
+                } else {
+                    println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, display_title, size_str);
+                }
             }
         }
         println!("\n--- Preview (first item) ---\n");

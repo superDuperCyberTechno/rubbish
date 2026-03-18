@@ -1,5 +1,5 @@
 use dialoguer::{theme::ColorfulTheme, Select};
-use std::{fs, process::Command, path::Path};
+use std::{fs, process::Command};
 use chrono::{DateTime, Local};
 
 fn human_size(bytes: u64) -> String {
@@ -40,12 +40,11 @@ fn main() {
         let meta = path.metadata();
         let (ts, size) = if let Ok(m) = meta {
             let size = m.len();
-            let ts = m.modified().ok().and_then(|t| {
-                DateTime::<Local>::from(t).into();
-                // Convert SystemTime to DateTime<Local>
-                Some(DateTime::<Local>::from(t))
-            });
-            let ts_str = ts.map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
+            let ts = m.modified().ok().map(|t| DateTime::<Local>::from(t));
+            let ts_str = ts
+                .as_ref()
+                .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_else(|| "unknown".into());
             (ts_str, human_size(size))
         } else {
             ("unknown".into(), "?".into())

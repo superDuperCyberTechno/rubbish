@@ -70,23 +70,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     files.sort_by_key(|(_, mtime, _)| mtime.unwrap_or(SystemTime::UNIX_EPOCH));
     files.reverse();
 
-    let mut items = Vec::new();
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut display: Vec<String> = Vec::new();
     let mut paths = Vec::new();
     for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
-        items.push(ListItem::new(format!("{}  —  {}  ({})", fname, ts, human_size(*size))));
+        let line = format!("{}  —  {}  ({})", fname, ts, human_size(*size));
+        display.push(line.clone());
+        items.push(ListItem::new(line));
         paths.push(path.clone());
+    }
+
+    // initial preview for selected item (used by TTY and non-TTY flows)
+    let mut preview = String::new();
+    if let Some(p) = paths.get(0) {
+        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
     }
 
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
         println!("Dumps:");
-        for (i, item) in items.iter().enumerate() {
+        for (i, line) in display.iter().enumerate() {
             // show index and single-line summary
-            println!("{}: {}", i + 1, item.replace('\n', " — "));
+            println!("{}: {}", i + 1, line.replace('\n', " — "));
         }
-        println!("\n--- Preview (first item) ---\n{}");
+        println!("\n--- Preview (first item) ---\n");
         println!("{}", preview);
         return Ok(());
     }

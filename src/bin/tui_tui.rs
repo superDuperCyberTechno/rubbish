@@ -177,16 +177,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let mut child = if pager == "cat" {
                                 Command::new("cat").arg(&path).spawn()
                             } else {
-                                // spawn pager in a new session so it doesn't receive terminal signals
+                                // spawn pager normally so it keeps the controlling terminal and is interactive
                                 let mut c = Command::new(pager);
                                 c.arg(&path);
-                                unsafe {
-                                    c.pre_exec(|| {
-                                        // create new session so child has its own pgid
-                                        libc::setsid();
-                                        Ok(())
-                                    });
-                                }
                                 c.spawn()
                             };
 

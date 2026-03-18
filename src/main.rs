@@ -3,6 +3,8 @@ use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
 use tokio::net::TcpListener;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
+use std::path::PathBuf;
+use std::env;
 use tokio::signal;
 use tracing::{error, info};
 
@@ -27,19 +29,28 @@ async fn main() {
 }
 
 async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {
+    // determine dumps directory (XDG_DATA_HOME/rubbish/dumps or ~/.local/share/rubbish/dumps)
+    let dumps_dir = match env::var("XDG_DATA_HOME") {
+        Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"),
+        _ => match env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("dumps"),
+            Err(_) => PathBuf::from("./dumps"),
+        },
+    };
+
     // Ensure dumps directory exists
-    if let Err(e) = fs::create_dir_all("dumps") {
+    if let Err(e) = fs::create_dir_all(&dumps_dir) {
         error!(%e, "failed to create dumps dir");
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "failed to create dumps dir");
     }
 
     let ts = Utc::now();
     let filename = make_filename(&headers, &ts);
-    let path = format!("dumps/{}.json", filename);
+    let path = dumps_dir.join(format!("{}.json", filename));
 
     match save_bytes(&path, &body).await {
         Ok(_) => {
-            info!(file = %path, "saved dump");
+            info!(file = %path.display(), "saved dump");
             (axum::http::StatusCode::OK, "ok")
         }
         Err(e) => {
@@ -95,9 +106,9 @@ fn sanitize_title(s: &str) -> String {
     res
 }
 
-async fn save_bytes(path: &str, bytes: &[u8]) -> std::io::Result<()> {
+async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     // write atomically: write to tmp then rename
-    let tmp = format!("{}.tmp", path);
+    let tmp = path.with_extension("json.tmp");
     let mut f = fs::File::create(&tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;

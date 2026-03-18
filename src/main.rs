@@ -1,8 +1,9 @@
 use axum::{extract::RawBody, http::HeaderMap, response::IntoResponse, routing::post, Router};
 use chrono::Utc;
-use std::{fs, io::Write, net::SocketAddr, path::Path};
+use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;
 use tracing::{error, info};
+use hyper::body::to_bytes;
 
 #[tokio::main]
 async fn main() {
@@ -33,8 +34,16 @@ async fn handle_dump(headers: HeaderMap, RawBody(body): RawBody) -> impl IntoRes
     let filename = make_filename(&headers, &ts);
     let path = format!("dumps/{}.json", filename);
 
-    // Write body bytes to file
-    match save_bytes(&path, &body).await {
+    // convert body to bytes and write to file
+    let bytes = match to_bytes(body).await {
+        Ok(b) => b,
+        Err(e) => {
+            error!(%e, "failed to read request body");
+            return (axum::http::StatusCode::BAD_REQUEST, "invalid body");
+        }
+    };
+
+    match save_bytes(&path, &bytes).await {
         Ok(_) => {
             info!(file = %path, "saved dump");
             (axum::http::StatusCode::OK, "ok")
@@ -52,13 +61,44 @@ fn make_filename(headers: &HeaderMap, ts: &chrono::DateTime<Utc>) -> String {
         .get("rubbish-title")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-
-    let title = sanitize_filename::sanitize(title);
+    let title = sanitize_title(title);
     if title.is_empty() {
         format!("{}", ts)
     } else {
         format!("{}_{}", ts, title)
     }
+}
+
+fn sanitize_title(s: &str) -> String {
+    // keep alphanumeric, dash, underscore and spaces; convert spaces to underscore;
+    // collapse runs and truncate to 60 chars
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c.is_whitespace() {
+            if c.is_whitespace() {
+                out.push('_');
+            } else {
+                out.push(c);
+            }
+        }
+    }
+    // collapse multiple underscores
+    let mut collapsed = String::with_capacity(out.len());
+    let mut prev_underscore = false;
+    for c in out.chars() {
+        if c == '_' {
+            if !prev_underscore {
+                collapsed.push(c);
+            }
+            prev_underscore = true;
+        } else {
+            collapsed.push(c);
+            prev_underscore = false;
+        }
+    }
+    let trimmed = collapsed.trim_matches('_');
+    let res: String = trimmed.chars().take(60).collect();
+    res
 }
 
 async fn save_bytes(path: &str, bytes: &[u8]) -> std::io::Result<()> {

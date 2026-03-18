@@ -39,6 +39,38 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
     Ok(buf)
 }
 
+// A custom widget that renders raw preview text without any wrapping. Each line is truncated
+// to the available width and written directly to the buffer, so there is no word-wrapping.
+struct RawPreview<'a> {
+    text: &'a str,
+}
+
+impl<'a> Widget for RawPreview<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut y = area.y as u16;
+        let max_lines = area.height as usize;
+        let max_width = area.width as usize;
+        for (i, line) in self.text.lines().enumerate() {
+            if i >= max_lines { break; }
+            // normalize tabs
+            let line = line.replace('\t', "    ");
+            // truncate by displayed width (unicode-aware)
+            let mut acc = String::new();
+            let mut cur_w = 0usize;
+            for ch in line.chars() {
+                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                if cur_w + cw > max_width { break; }
+                acc.push(ch);
+                cur_w += cw;
+            }
+            // replace spaces with NBSPs so the paragraph renderer won't re-wrap
+            let out = acc.replace(' ', "\u{00A0}");
+            buf.set_stringn(area.x, y, &out, max_width, Style::default());
+            y += 1;
+        }
+    }
+}
+
 fn human_size(bytes: u64) -> String {
     // Use IEC (binary) units: KiB, MiB, GiB, TiB, PiB (base 1024)
     const KIB: f64 = 1024.0;

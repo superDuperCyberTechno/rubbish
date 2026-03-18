@@ -601,12 +601,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let preview_display = preview
                 .lines()
                 .map(|l| {
-                    let w = UnicodeWidthStr::width(l);
-                    if w > avail_width {
+                    // replace tabs with 4 spaces for consistent measurement
+                    let line = l.replace('\t', "    ");
+                    let w = UnicodeWidthStr::width(line.as_str());
+                    let mut out = if w > avail_width {
                         // iterate grapheme-safe by chars and collect until width exceeds available
                         let mut acc = String::new();
                         let mut cur_w = 0usize;
-                        for ch in l.chars() {
+                        for ch in line.chars() {
                             let cw = UnicodeWidthStr::width(ch.to_string().as_str());
                             if cur_w + cw > avail_width { break; }
                             acc.push(ch);
@@ -614,8 +616,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         acc
                     } else {
-                        l.to_string()
-                    }
+                        line
+                    };
+                    // replace normal spaces with non-breaking spaces to avoid paragraph word-wrapping
+                    out.replace(' ', "\u{00A0}")
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -739,7 +743,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let avail_width = chunks[1].width as usize;
                                 let preview_display = preview
                                     .lines()
-                                    .map(|l| if l.chars().count() > avail_width { l.chars().take(avail_width).collect::<String>() } else { l.to_string() })
+                                    .map(|l| {
+                                        let line = l.replace('\t', "    ");
+                                        let w = UnicodeWidthStr::width(line.as_str());
+                                        let mut out = if w > avail_width {
+                                            let mut acc = String::new();
+                                            let mut cur_w = 0usize;
+                                            for ch in line.chars() {
+                                                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                                                if cur_w + cw > avail_width { break; }
+                                                acc.push(ch);
+                                                cur_w += cw;
+                                            }
+                                            acc
+                                        } else {
+                                            line
+                                        };
+                                        out.replace(' ', "\u{00A0}")
+                                    })
                                     .collect::<Vec<_>>()
                                     .join("\n");
 

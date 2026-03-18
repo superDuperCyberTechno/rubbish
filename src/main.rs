@@ -109,8 +109,21 @@ fn sanitize_title(s: &str) -> String {
 async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     // write atomically: write to tmp then rename
     let tmp = path.with_extension("json.tmp");
+    // Try to pretty-print JSON before saving. If parsing fails, fall back to original bytes.
+    let to_write: Vec<u8> = match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) => match serde_json::to_string_pretty(&v) {
+            Ok(mut s) => {
+                // ensure trailing newline for readability
+                s.push('\n');
+                s.into_bytes()
+            }
+            Err(_) => bytes.to_vec(),
+        },
+        Err(_) => bytes.to_vec(),
+    };
+
     let mut f = fs::File::create(&tmp)?;
-    f.write_all(bytes)?;
+    f.write_all(&to_write)?;
     f.sync_all()?;
     fs::rename(tmp, path)?;
     Ok(())

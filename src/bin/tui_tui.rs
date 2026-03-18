@@ -21,18 +21,50 @@ use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
-    // Read up to 64KB for preview and pretty-print JSON if possible
-    let f = std::fs::File::open(path)?;
-    let reader = std::io::BufReader::new(f);
-    let mut buf = String::new();
-    reader.take(64 * 1024).read_to_string(&mut buf)?;
+    // Prefer to pretty-print the JSON payload. If the file is reasonably small
+    // (<= 200 KiB) read it fully and attempt to parse & pretty-print. For large
+    // files read only a prefix (64 KiB) and fall back to raw text when parsing
+    // fails. In all cases truncate the returned preview to 64 KiB to keep the
+    // TUI responsive.
+    const PREVIEW_LIMIT: usize = 64 * 1024;
+    const FULL_PARSE_LIMIT: u64 = 200 * 1024; // 200 KiB
 
-    // Try to pretty-print JSON
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
-        return Ok(serde_json::to_string_pretty(&json)?);
+    let meta = std::fs::metadata(path).ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+
+    // Helper to truncate by bytes safely at UTF-8 boundary
+    fn truncate_utf8(s: &str, max_bytes: usize) -> String {
+        if s.len() <= max_bytes {
+            return s.to_string();
+        }
+        let mut end = max_bytes;
+        while !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s[..end].to_string()
     }
 
-    // Fallback: return raw (trimmed)
+    if size > 0 && size <= FULL_PARSE_LIMIT {
+        // read full file and try to pretty-print
+        let s = std::fs::read_to_string(path)?;
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&s) {
+            let pretty = serde_json::to_string_pretty(&json)?;
+            return Ok(truncate_utf8(&pretty, PREVIEW_LIMIT));
+        }
+        return Ok(truncate_utf8(&s, PREVIEW_LIMIT));
+    }
+
+    // Large file path: read up to PREVIEW_LIMIT bytes and try to parse that prefix
+    let f = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(f);
+    let mut buf = String::new();
+    reader.take(PREVIEW_LIMIT as u64).read_to_string(&mut buf)?;
+
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
+        let pretty = serde_json::to_string_pretty(&json)?;
+        return Ok(truncate_utf8(&pretty, PREVIEW_LIMIT));
+    }
+
     Ok(buf)
 }
 

@@ -1,6 +1,6 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
-// axum 0.8 does not export `Server` at the crate root; we'll use hyper::Server with the axum service
-use hyper::server::Server as HyperServer;
+// run with axum's `serve` helper using a TcpListener
+use tokio::net::TcpListener;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;
@@ -15,8 +15,9 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], 7771));
     info!(%addr, "starting rubbish dump server");
 
-    // axum provides a helper to run the service via hyper; construct the hyper server
-    let server = HyperServer::bind(&addr).serve(app.into_make_service());
+    // bind a TcpListener and run via axum::serve
+    let listener = TcpListener::bind(addr).await.expect("failed to bind");
+    let server = axum::serve(listener, app);
 
     // Run server until ctrl-c
     tokio::select! {

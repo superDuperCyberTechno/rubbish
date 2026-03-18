@@ -7,15 +7,13 @@ use tui::backend::CrosstermBackend;
 use tui::Terminal;
 use tui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use tui::layout::{Layout, Constraint, Direction};
-use tui::style::{Style, Modifier};
-use tui::text::Span;
 use tui::widgets::ListState;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and pretty-print JSON if possible
-    let mut f = std::fs::File::open(path)?;
+    let f = std::fs::File::open(path)?;
     let mut buf = String::new();
-    let _ = f.take(64 * 1024).read_to_string(&mut buf);
+    let _ = std::io::Read::by_ref(&mut &f).take(64 * 1024).read_to_string(&mut buf);
 
     // Try to pretty-print JSON
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {

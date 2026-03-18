@@ -1,4 +1,5 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
+use axum::Server;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;
@@ -14,8 +15,7 @@ async fn main() {
     info!(%addr, "starting rubbish dump server");
 
     // axum provides a helper to run the service via hyper; construct the hyper server
-    let svc = app.into_make_service();
-    let server = hyper::Server::bind(&addr).serve(svc);
+    let server = Server::bind(&addr).serve(app.into_make_service());
 
     // Run server until ctrl-c
     tokio::select! {

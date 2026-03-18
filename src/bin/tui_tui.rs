@@ -48,13 +48,20 @@ fn human_size(bytes: u64) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // determine dumps directory (XDG_DATA_HOME/rubbish/dumps or ~/.local/share/rubbish/dumps)
-    let dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") {
+    let mut dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") {
         Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"),
         _ => match env::var("HOME") {
             Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("dumps"),
             Err(_) => PathBuf::from("./dumps"),
         },
     };
+
+    // Ensure dumps directory exists; if creation fails, fall back to ./dumps
+    if let Err(e) = fs::create_dir_all(&dumps_dir) {
+        eprintln!("warning: failed to create dumps dir {}: {}\nFalling back to ./dumps", dumps_dir.display(), e);
+        dumps_dir = PathBuf::from("./dumps");
+        let _ = fs::create_dir_all(&dumps_dir);
+    }
 
     // collect files with metadata and sort by modified time (newest first)
     let rd = fs::read_dir(&dumps_dir)?;

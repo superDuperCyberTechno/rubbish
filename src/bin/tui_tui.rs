@@ -55,6 +55,16 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+fn right_align(text: &str, width: usize) -> String {
+    let len = text.chars().count();
+    if len >= width {
+        text.to_string()
+    } else {
+        let pad = std::iter::repeat(' ').take(width - len).collect::<String>();
+        format!("{}{}", pad, text)
+    }
+}
+
 fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>) {
     let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
     if let Ok(rd) = fs::read_dir(dumps_dir) {
@@ -544,7 +554,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .map(|(ts, title, size_str)| {
                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(format!("{:>12}", size_str.clone()))])
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
                 })
                 .collect();
 
@@ -667,7 +677,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .iter()
                                 .map(|(ts, title, size_str)| {
                                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(format!("{:>12}", size_str.clone()))])
+                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
                                 })
                                 .collect();
 

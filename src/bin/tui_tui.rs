@@ -83,9 +83,9 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
             if t.ends_with(".json") {
                 t.truncate(t.len() - 5);
             }
-            if t.is_empty() { "(no title)".to_string() } else { t }
+            if t.is_empty() { "".to_string() } else { t }
         } else {
-            "(no title)".to_string()
+            "".to_string()
         };
 
         let size_str = human_size(*size);
@@ -187,9 +187,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if t.ends_with(".json") {
                 t.truncate(t.len() - 5);
             }
-            if t.is_empty() { "(no title)".to_string() } else { t }
+            if t.is_empty() { "".to_string() } else { t }
         } else {
-            "(no title)".to_string()
+            "".to_string()
         };
 
         let size_str = human_size(*size);

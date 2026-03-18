@@ -1,10 +1,8 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
-use axum::extract::RawBody;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;
 use tracing::{error, info};
-use hyper::body::to_bytes;
 
 #[tokio::main]
 async fn main() {
@@ -24,7 +22,7 @@ async fn main() {
     }
 }
 
-async fn handle_dump(headers: HeaderMap, RawBody(body): RawBody) -> impl IntoResponse {
+async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {
     // Ensure dumps directory exists
     if let Err(e) = fs::create_dir_all("dumps") {
         error!(%e, "failed to create dumps dir");
@@ -35,16 +33,7 @@ async fn handle_dump(headers: HeaderMap, RawBody(body): RawBody) -> impl IntoRes
     let filename = make_filename(&headers, &ts);
     let path = format!("dumps/{}.json", filename);
 
-    // convert body to bytes and write to file
-    let bytes = match to_bytes(body).await {
-        Ok(b) => b,
-        Err(e) => {
-            error!(%e, "failed to read request body");
-            return (axum::http::StatusCode::BAD_REQUEST, "invalid body");
-        }
-    };
-
-    match save_bytes(&path, &bytes).await {
+    match save_bytes(&path, &body).await {
         Ok(_) => {
             info!(file = %path, "saved dump");
             (axum::http::StatusCode::OK, "ok")

@@ -1,14 +1,15 @@
-use std::io::{self, Read};
-use std::{fs, process::{Command, Stdio}, time::SystemTime, time::Duration, env};
+use std::io;
+use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use chrono::{DateTime, Local};
-use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}, event};
+use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
+use crossterm::event::{self, Event as CEvent, KeyCode};
 use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
 use std::sync::mpsc::channel;
 use std::thread;
-use crossterm::event::{Event as CEvent, KeyCode};
+use std::collections::HashMap;
 use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
@@ -20,13 +21,13 @@ use tui::widgets::TableState;
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and pretty-print JSON if possible
     let f = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(f);
     let mut buf = String::new();
-    let _ = std::io::Read::by_ref(&mut &f).take(64 * 1024).read_to_string(&mut buf);
+    reader.take(64 * 1024).read_to_string(&mut buf)?;
 
     // Try to pretty-print JSON
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
-        let pretty = serde_json::to_string_pretty(&json)?;
-        return Ok(pretty);
+        return Ok(serde_json::to_string_pretty(&json)?);
     }
 
     // Fallback: return raw (trimmed)
@@ -148,6 +149,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if entries.is_empty() {
         preview = "(no preview available)".to_string();
     }
+
+    // filesystem watcher: notify main thread when dumps_dir content changes
+    let (fs_tx, fs_rx) = std::sync::mpsc::channel();
+    let watch_dir = dumps_dir.clone();
+    thread::spawn(move || {
+        let mut last: HashMap<String, std::time::SystemTime> = HashMap::new();
+        loop {
+            let mut current: HashMap<String, std::time::SystemTime> = HashMap::new();
+            if let Ok(rd) = std::fs::read_dir(&watch_dir) {
+                for e in rd.filter_map(|e| e.ok()) {
+                    let p = e.path();
+                    if p.is_file() {
+                        if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                            current.insert(p.to_string_lossy().to_string(), m);
+                        }
+                    }
+                }
+            }
+            if current != last {
+                let _ = fs_tx.send(());
+                last = current;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    });
 
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {

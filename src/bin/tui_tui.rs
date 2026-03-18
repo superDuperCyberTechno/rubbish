@@ -259,6 +259,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                                     .split(size);
 
+                            // rebuild list_items for redraw
+                            let list_width = chunks[0].width as usize;
+                            let mut list_items: Vec<ListItem> = Vec::with_capacity(entries.len());
+                            for (ts, title, size_str) in entries.iter() {
+                                let title_trunc = if title.len() > 40 { title.chars().take(37).collect::<String>() + "..." } else { title.clone() };
+                                let ts_w = 19usize;
+                                let size_w = 8usize;
+                                let available = if list_width > ts_w + size_w + 4 { list_width - ts_w - size_w - 4 } else { 0 };
+                                let title_disp = if available > 0 && title_trunc.len() > available { title_trunc.chars().take(available - 3).collect::<String>() + "..." } else { title_trunc };
+                                let line = format!("{:<19}  {:<width$} {:>8}", ts, title_disp, size_str, width = available);
+                                list_items.push(ListItem::new(line));
+                            }
                             let mut list = List::new(list_items).block(Block::default().borders(Borders::ALL).title("Dumps"));
                             list = list.highlight_symbol("» ");
                             f.render_stateful_widget(list, chunks[0], &mut state);

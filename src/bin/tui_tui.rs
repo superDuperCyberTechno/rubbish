@@ -292,11 +292,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        let server_spawn = if std::path::Path::new("target/debug/rubbish").exists() {
-            Command::new("./target/debug/rubbish").stdout(stdout_dest).stderr(stderr_dest).spawn()
-        } else {
-            Command::new("cargo").args(["run","--bin","rubbish"]).stdout(stdout_dest).stderr(stderr_dest).spawn()
-        };
+        // Try several candidate server executables in order before falling back to `cargo run`.
+        let candidates = [
+            "./target/debug/rubbish",
+            "./target/release/rubbish",
+            "./rubbish",
+            "rubbish",
+        ];
+        let mut server_spawn = Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no candidate tried"));
+        for c in &candidates {
+            let cmd = std::path::Path::new(c);
+            if cmd.exists() {
+                server_spawn = Command::new(c).stdout(stdout_dest.try_clone().unwrap_or(Stdio::null())).stderr(stderr_dest.try_clone().unwrap_or(Stdio::null())).spawn();
+                if server_spawn.is_ok() { break; }
+            }
+        }
+        if server_spawn.is_err() {
+            // final fallback: use `cargo run --bin rubbish`
+            server_spawn = Command::new("cargo").args(["run","--bin","rubbish"]).stdout(stdout_dest).stderr(stderr_dest).spawn();
+        }
 
         let res = match server_spawn {
             Ok(child) => {

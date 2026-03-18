@@ -1,6 +1,6 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
 // axum 0.8 does not export `Server` at the crate root; we'll use hyper::Server with the axum service
-use hyper::server::Server as HyperServer;
+use hyper::Server as HyperServer;
 use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use tokio::signal;

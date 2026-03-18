@@ -21,6 +21,7 @@ crossterm = "0.26"
 signal-hook = "0.3"
 libc = "0.2"
 notify = "5"
+unicode-width = "0.1"
 
 [[bin]]
 name = "tui"

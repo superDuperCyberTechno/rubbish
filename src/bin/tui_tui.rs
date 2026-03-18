@@ -16,6 +16,7 @@ use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell};
+use unicode_width::UnicodeWidthStr;
 use tui::style::{Style, Modifier};
 use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
@@ -599,7 +600,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let avail_width = chunks[1].width as usize;
             let preview_display = preview
                 .lines()
-                .map(|l| if l.chars().count() > avail_width { l.chars().take(avail_width).collect::<String>() } else { l.to_string() })
+                .map(|l| {
+                    let w = UnicodeWidthStr::width(l);
+                    if w > avail_width {
+                        // iterate grapheme-safe by chars and collect until width exceeds available
+                        let mut acc = String::new();
+                        let mut cur_w = 0usize;
+                        for ch in l.chars() {
+                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                            if cur_w + cw > avail_width { break; }
+                            acc.push(ch);
+                            cur_w += cw;
+                        }
+                        acc
+                    } else {
+                        l.to_string()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
 

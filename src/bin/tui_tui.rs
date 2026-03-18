@@ -37,16 +37,17 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
 }
 
 fn human_size(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
+    // Use IEC (binary) units: KiB, MiB, GiB (base 1024)
+    const KIB: f64 = 1024.0;
     let b = bytes as f64;
-    if b < KB {
+    if b < KIB {
         format!("{} B", bytes)
-    } else if b < KB * KB {
-        format!("{:.1} KB", b / KB)
-    } else if b < KB * KB * KB {
-        format!("{:.1} MB", b / (KB * KB))
+    } else if b < KIB * KIB {
+        format!("{:.1} KiB", b / KIB)
+    } else if b < KIB * KIB * KIB {
+        format!("{:.1} MiB", b / (KIB * KIB))
     } else {
-        format!("{:.1} GB", b / (KB * KB * KB))
+        format!("{:.1} GiB", b / (KIB * KIB * KIB))
     }
 }
 
@@ -83,9 +84,9 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
             if t.ends_with(".json") {
                 t.truncate(t.len() - 5);
             }
-            if t.is_empty() { "".to_string() } else { t }
+            if t.is_empty() { "(no title)".to_string() } else { t }
         } else {
-            "".to_string()
+            "(no title)".to_string()
         };
 
         let size_str = human_size(*size);
@@ -187,9 +188,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if t.ends_with(".json") {
                 t.truncate(t.len() - 5);
             }
-            if t.is_empty() { "".to_string() } else { t }
+            if t.is_empty() { "(no title)".to_string() } else { t }
         } else {
-            "".to_string()
+            "(no title)".to_string()
         };
 
         let size_str = human_size(*size);

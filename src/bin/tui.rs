@@ -63,7 +63,20 @@ fn main() {
             .map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string())
             .unwrap_or_else(|| "unknown".into());
 
-        items.push(format!("{}  —  {}  ({})", fname, ts_str, human_size(*size)));
+        // derive a human title from filename: <ts>_<title>.json or just <ts>.json
+        let title = if let Some(idx) = fname.find('_') {
+            let mut t = fname[idx + 1..].to_string();
+            if t.ends_with(".json") {
+                t.truncate(t.len() - 5);
+            }
+            t
+        } else {
+            String::new()
+        };
+
+        // show timestamp+size on first row, title (from rubbish-title) on second row
+        let title_display = if title.is_empty() { "(no title)".to_string() } else { title.clone() };
+        items.push(format!("{} ({})\n{}", ts_str, human_size(*size), title_display));
         paths.push(path.clone());
     }
 

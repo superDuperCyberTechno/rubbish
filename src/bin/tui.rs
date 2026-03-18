@@ -1,5 +1,5 @@
 use dialoguer::{theme::ColorfulTheme, Select};
-use std::{fs, process::Command};
+use std::{fs, process::{Command, Stdio}, time::SystemTime};
 use chrono::{DateTime, Local};
 
 fn human_size(bytes: u64) -> String {
@@ -17,41 +17,54 @@ fn human_size(bytes: u64) -> String {
 }
 
 fn main() {
-    let entries = match fs::read_dir("dumps") {
-        Ok(rd) => rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).collect::<Vec<_>>(),
+    let rd = match fs::read_dir("dumps") {
+        Ok(rd) => rd,
         Err(_) => {
             println!("no dumps directory");
             return;
         }
     };
 
-    if entries.is_empty() {
+    // Collect entries (only files) and their metadata, then sort by modified time desc
+    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            let path = e.path();
+            if !path.is_file() {
+                return None;
+            }
+            let meta = path.metadata().ok();
+            let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            Some((path, mtime, size))
+        })
+        .filter_map(|x| x)
+        .collect::<Vec<_>>();
+
+    if files.is_empty() {
         println!("no dumps found");
         return;
     }
 
+    files.sort_by_key(|(_, mtime, _)| {
+        // sort descending: map to SystemTime, missing -> UNIX_EPOCH
+        mtime.unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+    files.reverse();
+
     // Build display items with filename, modified timestamp and size
-    let mut items: Vec<String> = Vec::with_capacity(entries.len());
-    let mut paths: Vec<std::path::PathBuf> = Vec::with_capacity(entries.len());
+    let mut items: Vec<String> = Vec::with_capacity(files.len());
+    let mut paths: Vec<std::path::PathBuf> = Vec::with_capacity(files.len());
 
-    for e in entries.iter() {
-        let path = e.path();
+    for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let meta = path.metadata();
-        let (ts, size) = if let Ok(m) = meta {
-            let size = m.len();
-            let ts = m.modified().ok().map(|t| DateTime::<Local>::from(t));
-            let ts_str = ts
-                .as_ref()
-                .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
-                .unwrap_or_else(|| "unknown".into());
-            (ts_str, human_size(size))
-        } else {
-            ("unknown".into(), "?".into())
-        };
+        let ts_str = mtime
+            .as_ref()
+            .map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string())
+            .unwrap_or_else(|| "unknown".into());
 
-        items.push(format!("{}  —  {}  ({})", fname, ts, size));
-        paths.push(path);
+        items.push(format!("{}  —  {}  ({})", fname, ts_str, human_size(*size)));
+        paths.push(path.clone());
     }
 
     let selection = Select::with_theme(&ColorfulTheme::default())
@@ -63,7 +76,21 @@ fn main() {
     match selection {
         Ok(idx) => {
             let path = &paths[idx];
-            let _ = Command::new("jless").arg(path).status();
+            // prefer jless if available, fallback to less, then cat
+            let pager = if Command::new("jless").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+                "jless"
+            } else if Command::new("less").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+                "less"
+            } else {
+                // last resort: print a helpful message and show with cat
+                println!("neither jless nor less found in PATH; printing file contents below:\n");
+                let _ = Command::new("cat").arg(path).status();
+                return;
+            };
+
+            if let Err(e) = Command::new(pager).arg(path).status() {
+                eprintln!("failed to spawn {}: {}", pager, e);
+            }
         }
         Err(e) => eprintln!("selection failed: {}", e),
     }

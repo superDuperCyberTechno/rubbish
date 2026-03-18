@@ -21,18 +21,12 @@ use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
-    // Read up to 64KB for preview and pretty-print JSON if possible
+    // Read up to 64KB for preview and return the file contents as-is
+    // (do not reformat/pretty-print JSON here; show the file text exactly as stored).
     let f = std::fs::File::open(path)?;
-    let reader = std::io::BufReader::new(f);
+    let mut reader = std::io::BufReader::new(f);
     let mut buf = String::new();
     reader.take(64 * 1024).read_to_string(&mut buf)?;
-
-    // Try to pretty-print JSON
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&buf) {
-        return Ok(serde_json::to_string_pretty(&json)?);
-    }
-
-    // Fallback: return raw (trimmed)
     Ok(buf)
 }
 

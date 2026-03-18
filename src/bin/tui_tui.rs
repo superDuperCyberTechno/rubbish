@@ -88,8 +88,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "(no title)".to_string()
         };
 
-        // First row: timestamp + size. Second row: title
-        let line = format!("{} ({})\n{}", ts, human_size(*size), title);
+        // single-line with three columns: timestamp | title | size
+        let size_str = human_size(*size);
+        // timestamp is fixed width (19), title gets up to 40 chars, size right-aligned
+        let title_trunc = if title.len() > 40 { title.chars().take(37).collect::<String>() + "..." } else { title };
+        let line = format!("{:<19}  {:<40} {:>8}", ts, title_trunc, size_str);
         display.push(line.clone());
         items.push(ListItem::new(line));
         paths.push(path.clone());

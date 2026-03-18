@@ -201,8 +201,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
 
-                            // re-enter alternate screen and resume
-                            let _ = execute!(terminal.backend_mut(), EnterAlternateScreen);
+                            // Recreate terminal backend and re-enter alternate screen so the TUI is fully restored.
+                            // This is more robust across pagers/terminals than re-using the old backend.
+                            let mut stdout = io::stdout();
+                            execute!(stdout, EnterAlternateScreen)?;
+                            let backend = CrosstermBackend::new(stdout);
+                            // replace the terminal with a freshly initialized one
+                            terminal = Terminal::new(backend)?;
                             let _ = enable_raw_mode();
 
                             // refresh preview for current selection

@@ -25,4 +25,4 @@ unicode-width = "0.1"
 
 [[bin]]
 name = "tui"
-path = "src/bin/tui_tui.rs"
+path = "src/bin/tui.rs"

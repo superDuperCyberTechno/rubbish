@@ -44,8 +44,9 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "failed to create dumps dir");
     }
 
-    let ts = Utc::now();
-    let filename = make_filename(&headers, &ts);
+    // build filename as: [title]_[ulid].json where title may be empty
+    let id = ulid::Ulid::new().to_string();
+    let filename = make_filename(&headers, &id);
     let path = dumps_dir.join(format!("{}.json", filename));
 
     match save_bytes(&path, &body).await {
@@ -60,17 +61,16 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
     }
 }
 
-fn make_filename(headers: &HeaderMap, ts: &chrono::DateTime<Utc>) -> String {
-    let ts = ts.format("%Y%m%dT%H%M%S%.3fZ");
+fn make_filename(headers: &HeaderMap, id: &str) -> String {
     let title = headers
         .get("rubbish-title")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let title = sanitize_title(title);
     if title.is_empty() {
-        format!("{}", ts)
+        format!("_{}", id)
     } else {
-        format!("{}_{}", ts, title)
+        format!("{}_{}", title, id)
     }
 }
 

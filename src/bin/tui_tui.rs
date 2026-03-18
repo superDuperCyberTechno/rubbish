@@ -118,6 +118,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(p) = paths.get(0) {
         preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
     }
+    if entries.is_empty() {
+        preview = "(no preview available)".to_string();
+    }
 
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
@@ -147,7 +150,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // interactive list state
     let mut state = TableState::default();
-    state.select(Some(0));
+    if entries.is_empty() {
+        state.select(None);
+    } else {
+        state.select(Some(0));
+    }
 
     // Setup signal handling to gracefully exit and restore terminal
     let (sig_tx, sig_rx) = channel();
@@ -183,7 +190,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(12)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-            f.render_stateful_widget(table, chunks[0], &mut state);
+            if entries.is_empty() {
+                // draw an empty placeholder in the table area
+                let empty = Paragraph::new("(no dumps found)").block(Block::default().borders(Borders::ALL).title("Dumps"));
+                f.render_widget(empty, chunks[0]);
+            } else {
+                f.render_stateful_widget(table, chunks[0], &mut state);
+            }
 
             let paragraph = Paragraph::new(preview.clone())
                 .block(Block::default().borders(Borders::ALL).title("Preview"))

@@ -122,11 +122,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
     if !atty::is(Stream::Stdout) {
         println!("Dumps (from {}):", dumps_dir.display());
-        for (i, (ts, title, size_str)) in entries.iter().enumerate() {
-            println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() }, size_str);
+        if entries.is_empty() {
+            println!("(no dumps found)");
+        } else {
+            for (i, (ts, title, size_str)) in entries.iter().enumerate() {
+                println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() }, size_str);
+            }
         }
         println!("\n--- Preview (first item) ---\n");
-        println!("{}", preview);
+        if preview.is_empty() {
+            println!("(no preview available)");
+        } else {
+            println!("{}", preview);
+        }
         return Ok(());
     }
 

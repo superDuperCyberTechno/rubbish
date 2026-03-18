@@ -7,6 +7,7 @@ use signal_hook::iterator::Signals;
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use crossterm::event::{Event as CEvent, KeyCode};
+use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 use tui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
@@ -76,6 +77,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
         items.push(ListItem::new(format!("{}  —  {}  ({})", fname, ts, human_size(*size))));
         paths.push(path.clone());
+    }
+
+    // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
+    if !atty::is(Stream::Stdout) {
+        println!("Dumps:");
+        for (i, item) in items.iter().enumerate() {
+            // show index and single-line summary
+            println!("{}: {}", i + 1, item.replace('\n', " — "));
+        }
+        println!("\n--- Preview (first item) ---\n{}");
+        println!("{}", preview);
+        return Ok(());
     }
 
     // Setup terminal

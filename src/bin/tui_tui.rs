@@ -64,26 +64,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // collect files with metadata and sort by modified time (newest first)
-    let rd = fs::read_dir(&dumps_dir)?;
-    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = rd
-        .filter_map(|e| e.ok())
-        .map(|e| {
-            let path = e.path();
-            if !path.is_file() {
-                return None;
-            }
-            let meta = path.metadata().ok();
-            let mtime = meta.as_ref().and_then(|m| m.modified().ok());
-            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            Some((path, mtime, size))
-        })
-        .filter_map(|x| x)
-        .collect();
-
-    if files.is_empty() {
-        println!("no dumps found");
-        return Ok(());
+    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
+    if let Ok(rd) = fs::read_dir(&dumps_dir) {
+        files = rd
+            .filter_map(|e| e.ok())
+            .map(|e| {
+                let path = e.path();
+                if !path.is_file() {
+                    return None;
+                }
+                let meta = path.metadata().ok();
+                let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                Some((path, mtime, size))
+            })
+            .filter_map(|x| x)
+            .collect();
+    } else {
+        // directory missing or unreadable — continue with empty files list so TUI still runs
+        files = Vec::new();
     }
+
+    // do not exit when there are no dumps; allow TUI to run with an empty list
 
     files.sort_by_key(|(_, mtime, _)| mtime.unwrap_or(SystemTime::UNIX_EPOCH));
     files.reverse();

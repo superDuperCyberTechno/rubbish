@@ -10,9 +10,9 @@ use crossterm::event::{Event as CEvent, KeyCode};
 use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
-use tui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell};
 use tui::layout::{Layout, Constraint, Direction};
-use tui::widgets::ListState;
+use tui::widgets::TableState;
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and pretty-print JSON if possible
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // interactive list state
-    let mut state = ListState::default();
+    let mut state = TableState::default();
     state.select(Some(0));
 
     // Setup signal handling to gracefully exit and restore terminal
@@ -140,23 +140,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(size);
 
-            // build list items dynamically to fit available width
-            let list_width = chunks[0].width as usize;
-            let mut list_items: Vec<ListItem> = Vec::with_capacity(entries.len());
-            for (ts, title, size_str) in entries.iter() {
-                let title_trunc = if title.len() > 40 { title.chars().take(37).collect::<String>() + "..." } else { title.clone() };
-                // adjust title width based on available space: leave 2 spaces between columns
-                let ts_w = 19usize;
-                let size_w = 8usize;
-                let available = if list_width > ts_w + size_w + 4 { list_width - ts_w - size_w - 4 } else { 0 };
-                let title_disp = if available > 0 && title_trunc.len() > available { title_trunc.chars().take(available - 3).collect::<String>() + "..." } else { title_trunc };
-                let line = format!("{:<19}  {:<width$} {:>8}", ts, title_disp, size_str, width = available);
-                list_items.push(ListItem::new(line));
-            }
+            // Render a table with three columns: timestamp | title | size
+            let rows: Vec<Row> = entries
+                .iter()
+                .map(|(ts, title, size_str)| {
+                    let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(size_str.clone())])
+                })
+                .collect();
 
-            let mut list = List::new(list_items).block(Block::default().borders(Borders::ALL).title("Dumps"));
-            list = list.highlight_symbol("» ");
-            f.render_stateful_widget(list, chunks[0], &mut state);
+            let table = Table::new(rows)
+                .header(Row::new(vec![Cell::from("Timestamp"), Cell::from("Title"), Cell::from("Size")]))
+                .block(Block::default().borders(Borders::ALL).title("Dumps"))
+                .widths(&[Constraint::Length(19), Constraint::Percentage(70), Constraint::Length(10)]);
+
+            f.render_stateful_widget(table, chunks[0], &mut TableState::default());
 
             let paragraph = Paragraph::new(preview.clone())
                 .block(Block::default().borders(Borders::ALL).title("Preview"))

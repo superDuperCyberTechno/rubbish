@@ -589,7 +589,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 f.render_stateful_widget(table, chunks[0], &mut state);
             }
 
-            let paragraph = Paragraph::new(preview.clone())
+            // Prevent word-wrap: truncate each line to the available width so the paragraph
+            // displays lines as-is without wrapping to the next line.
+            let avail_width = chunks[1].width as usize;
+            let preview_display = preview
+                .lines()
+                .map(|l| if l.chars().count() > avail_width { l.chars().take(avail_width).collect::<String>() } else { l.to_string() })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let paragraph = Paragraph::new(preview_display)
                 .block(Block::default().borders(Borders::ALL).title("Preview"))
                 .wrap(Wrap { trim: false });
             f.render_widget(paragraph, chunks[1]);
@@ -705,7 +714,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             f.render_stateful_widget(table, chunks[0], &mut state);
 
-                                let paragraph = Paragraph::new(preview.clone())
+                                let avail_width = chunks[1].width as usize;
+                                let preview_display = preview
+                                    .lines()
+                                    .map(|l| if l.chars().count() > avail_width { l.chars().take(avail_width).collect::<String>() } else { l.to_string() })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+
+                                let paragraph = Paragraph::new(preview_display)
                                     .block(Block::default().borders(Borders::ALL).title("Preview"))
                                     .wrap(Wrap { trim: false });
                                 f.render_widget(paragraph, chunks[1]);

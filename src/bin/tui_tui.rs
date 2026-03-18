@@ -172,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     KeyCode::Esc => break,
                     KeyCode::Up => {
                         if let Some(i) = state.selected() {
-                            let len = items.len();
+                            let len = entries.len();
                             let ni = if i == 0 { len - 1 } else { i - 1 };
                             state.select(Some(ni));
                             if let Some(p) = paths.get(ni) {
@@ -182,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Down => {
                         if let Some(i) = state.selected() {
-                            let ni = (i + 1) % items.len();
+                            let ni = (i + 1) % entries.len();
                             state.select(Some(ni));
                             if let Some(p) = paths.get(ni) {
                                 preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
@@ -259,9 +259,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                                     .split(size);
 
-                                let mut list = List::new(items.clone()).block(Block::default().borders(Borders::ALL).title("Dumps"));
-                                list = list.highlight_symbol("» ");
-                                f.render_stateful_widget(list, chunks[0], &mut state);
+                            let mut list = List::new(list_items).block(Block::default().borders(Borders::ALL).title("Dumps"));
+                            list = list.highlight_symbol("» ");
+                            f.render_stateful_widget(list, chunks[0], &mut state);
 
                                 let paragraph = Paragraph::new(preview.clone())
                                     .block(Block::default().borders(Borders::ALL).title("Preview"))

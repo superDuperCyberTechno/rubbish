@@ -138,9 +138,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     KeyCode::Enter => {
                         if let Some(i) = state.selected() {
-                            selected_path = Some(paths[i].clone());
+                            // open pager while keeping this process running; leave alternate screen,
+                            // run pager, then re-enter alternate screen and continue
+                            let path = paths[i].clone();
+
+                            // detect pager
+                            let pager = if Command::new("jless").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+                                "jless"
+                            } else if Command::new("less").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+                                "less"
+                            } else {
+                                // fallback to cat
+                                "cat"
+                            };
+
+                            // restore terminal to normal
+                            let _ = disable_raw_mode();
+                            let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+                            let _ = terminal.show_cursor();
+
+                            // run pager (blocking)
+                            if pager == "cat" {
+                                let _ = Command::new("cat").arg(&path).status();
+                            } else {
+                                let _ = Command::new(pager).arg(&path).status();
+                            }
+
+                            // re-enter alternate screen and resume
+                            let _ = execute!(terminal.backend_mut(), EnterAlternateScreen);
+                            let _ = enable_raw_mode();
+
+                            // refresh preview for current selection
+                            preview = read_preview(&path).unwrap_or_else(|e| format!("failed to read preview: {}", e));
                         }
-                        break;
                     }
                     _ => {}
                 }

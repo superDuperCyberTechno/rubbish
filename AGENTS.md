@@ -1,0 +1,10 @@
+This project is a Rust-based dump-server, running in the terminal. It must be running on localhost, port 7771. Other development projects can then dump JSON to this server which will intercept the data and present it.
+- All received dumps will be in JSON.
+- Any dump will be listed in the TUI.
+- Dumps will be listed with a timestamp and a potential title.
+- Dump titles will be extracted from the dump header `rubbish-title`.
+- When a dump is accessed, open it with jless (crates.io/crates/jless)
+- jless will be available in PATH.
+- After each change propose a commit (with a fitting commit message).
+- Never commit on your own.
+- Never push to origin or propose to do so.

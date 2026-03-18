@@ -188,9 +188,9 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
                         let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        if mtime > emtime {
-                            paths.insert(i, p.clone());
-                            entries.insert(i, entry);
+                            if mtime > emtime {
+                                paths.insert(i, p.clone());
+                                entries.insert(i, entry.clone());
                             // if we inserted before the selected index, shift selection down to keep same item
                             if let Some(sel) = state.selected() {
                                 if i <= sel {

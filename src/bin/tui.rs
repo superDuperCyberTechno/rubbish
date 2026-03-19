@@ -881,6 +881,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // filtering mode: true = match all selected tags (intersection), false = match any (union)
     let mut match_all: bool = true;
 
+    // detect whether `jless` is available in PATH. If not present, disable the Enter
+    // keybinding for opening dumps. We intentionally do not fall back to `less` or
+    // `cat` here so the application has no external runtime dependency on a pager.
+    let has_jless: bool = Command::new("jless").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+
     // Setup signal handling to gracefully exit and restore terminal
     let (sig_tx, sig_rx) = channel();
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).unwrap();
@@ -1288,45 +1293,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     KeyCode::Enter => {
-                        if let Some(i) = state.selected() {
-                            // open pager while keeping this process running; leave alternate screen,
-                            // run pager, then re-enter alternate screen and continue
+                        // Only respond to Enter if jless is present. Otherwise Enter is disabled.
+                        if !has_jless {
+                            // ignore
+                        } else if let Some(i) = state.selected() {
+                            // open jless while keeping this process running; leave alternate screen,
+                            // run jless, then re-enter alternate screen and continue
                             let path = paths[i].clone();
-
-                            // detect pager
-                            let pager = if Command::new("jless").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
-                                "jless"
-                            } else if Command::new("less").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
-                                "less"
-                            } else {
-                                // fallback to cat
-                                "cat"
-                            };
 
                             // restore terminal to normal
                             let _ = disable_raw_mode();
                             let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
                             let _ = terminal.show_cursor();
 
-                            // run pager (blocking) but keep parent able to receive signals and forward them
-                            let child = if pager == "cat" {
-                                Command::new("cat").arg(&path).spawn()
-                            } else {
-                                // spawn pager normally so it keeps the controlling terminal and is interactive
-                                let mut c = Command::new(pager);
-                                c.arg(&path);
-                                c.spawn()
-                            };
+                            // run jless (blocking) and forward signals while it runs
+                            let child = Command::new("jless").arg(&path).spawn();
 
                             if let Ok(mut child) = child {
                                 // while child is running, forward any received signals to the child
                                 loop {
-                                    // poll for signals
                                     if let Ok(sig) = sig_rx.try_recv() {
-                                        // translate signal number to libc signal and forward
-                                        unsafe {
-                                            libc::kill(child.id() as i32, sig);
-                                        }
+                                        unsafe { libc::kill(child.id() as i32, sig); }
                                     }
                                     match child.try_wait() {
                                         Ok(Some(_)) => break,
@@ -1337,11 +1324,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             // Recreate terminal backend and re-enter alternate screen so the TUI is fully restored.
-                            // This is more robust across pagers/terminals than re-using the old backend.
                             let mut stdout = io::stdout();
                             execute!(stdout, EnterAlternateScreen)?;
                             let backend = CrosstermBackend::new(stdout);
-                            // replace the terminal with a freshly initialized one
                             terminal = Terminal::new(backend)?;
                             let _ = enable_raw_mode();
 
@@ -1351,40 +1336,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // Small delay to allow terminal to settle, then redraw the TUI so the screen is restored
                             std::thread::sleep(Duration::from_millis(100));
                             let _ = terminal.draw(|f| {
-                            let size = f.size();
-                            let vchunks = Layout::default()
-                                .direction(Direction::Vertical)
-                                .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
-                                .split(size);
-                            let chunks = Layout::default()
-                                .direction(Direction::Horizontal)
-                                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                                .split(vchunks[0]);
-                            let left_chunks = Layout::default()
-                                .direction(Direction::Horizontal)
-                                // Outer length = inner width (21) + 2 for block borders
-                                .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
-                                .split(chunks[0]);
+                                let size = f.size();
+                                let vchunks = Layout::default()
+                                    .direction(Direction::Vertical)
+                                    .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
+                                    .split(size);
+                                let chunks = Layout::default()
+                                    .direction(Direction::Horizontal)
+                                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                                    .split(vchunks[0]);
+                                let left_chunks = Layout::default()
+                                    .direction(Direction::Horizontal)
+                                    // Outer length = inner width (21) + 2 for block borders
+                                    .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
+                                    .split(chunks[0]);
 
-                            // rebuild and render the Table for redraw (timestamp-only list)
-                            let rows: Vec<Row> = entries
-                                .iter()
-                                .enumerate()
-                                .map(|(i, (ts, _title, _size_str))| {
-                                    // display prefix for selected master index: two-space indent for focused dump
-                                    // non-focused dumps are unindented
-                                    let prefix = if Some(i) == state.selected() { "  " } else { "" };
-                                    let cell = format!("{}{}", prefix, ts);
-                                    Row::new(vec![Cell::from(cell)])
-                                })
-                                .collect();
+                                // rebuild and render the Table for redraw (timestamp-only list)
+                                let rows: Vec<Row> = entries
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, (ts, _title, _size_str))| {
+                                        let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                                        let cell = format!("{}{}", prefix, ts);
+                                        Row::new(vec![Cell::from(cell)])
+                                    })
+                                    .collect();
 
-                            let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-                            let table = Table::new(rows)
-                                .block(table_block.clone())
-                                .widths(&[Constraint::Length(21)]);
+                                let table_block = Block::default().borders(Borders::ALL).title("Dumps");
+                                let table = Table::new(rows)
+                                    .block(table_block.clone())
+                                    .widths(&[Constraint::Length(21)]);
 
-                            f.render_stateful_widget(table, left_chunks[1], &mut state);
+                                f.render_stateful_widget(table, left_chunks[1], &mut state);
 
                                 let preview_widget = RawPreview { text: &preview };
                                 let block = Block::default().borders(Borders::ALL).title("Preview");

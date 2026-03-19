@@ -51,6 +51,15 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
 
     match save_bytes(&path, &body).await {
         Ok(_) => {
+            // If tags were provided, write a .tags file next to the dump containing the raw tags header
+            if let Some(tags_val) = headers.get("rubbish-tags") {
+                if let Ok(tags_str) = tags_val.to_str() {
+                    let tags_path = path.with_extension("tags");
+                    if let Err(e) = write_text_atomic(&tags_path, tags_str) {
+                        error!(%e, file = %tags_path.display(), "failed to write tags file");
+                    }
+                }
+            }
             info!(file = %path.display(), "saved dump");
             (axum::http::StatusCode::OK, "ok")
         }
@@ -124,6 +133,15 @@ async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
 
     let mut f = fs::File::create(&tmp)?;
     f.write_all(&to_write)?;
+    f.sync_all()?;
+    fs::rename(tmp, path)?;
+    Ok(())
+}
+
+fn write_text_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("tags.tmp");
+    let mut f = fs::File::create(&tmp)?;
+    f.write_all(text.as_bytes())?;
     f.sync_all()?;
     fs::rename(tmp, path)?;
     Ok(())

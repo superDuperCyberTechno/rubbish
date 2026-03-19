@@ -44,21 +44,38 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "failed to create dumps dir");
     }
 
-    // build filename as: [title]_[ulid].json where title may be empty
+    // build filename as: [ulid].json (dump name is ULID)
     let id = ulid::Ulid::new().to_string();
-    let filename = make_filename(&headers, &id);
-    let path = dumps_dir.join(format!("{}.json", filename));
+    let path = dumps_dir.join(format!("{}.json", id));
 
     match save_bytes(&path, &body).await {
         Ok(_) => {
-            // If tags were provided, write a .tags file next to the dump containing the raw tags header
+            // Build metadata object with optional title and tags and write atomically next to the dump
+            let title_str = headers
+                .get("rubbish-title")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+
+            let mut tags_vec: Vec<String> = Vec::new();
             if let Some(tags_val) = headers.get("rubbish-tags") {
                 if let Ok(tags_str) = tags_val.to_str() {
-                    let tags_path = path.with_extension("tags");
-                    if let Err(e) = write_text_atomic(&tags_path, tags_str) {
-                        error!(%e, file = %tags_path.display(), "failed to write tags file");
+                    for t in tags_str.split(',') {
+                        let tt = t.trim();
+                        if !tt.is_empty() {
+                            tags_vec.push(tt.to_string());
+                        }
                     }
                 }
+            }
+
+            let meta = serde_json::json!({
+                "title": title_str,
+                "tags": tags_vec,
+            });
+            let meta_path = path.with_extension("metadata.json");
+            if let Err(e) = write_text_atomic(&meta_path, &serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string())) {
+                error!(%e, file = %meta_path.display(), "failed to write metadata file");
             }
             info!(file = %path.display(), "saved dump");
             (axum::http::StatusCode::OK, "ok")
@@ -71,16 +88,8 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
 }
 
 fn make_filename(headers: &HeaderMap, id: &str) -> String {
-    let title = headers
-        .get("rubbish-title")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let title = sanitize_title(title);
-    if title.is_empty() {
-        format!("_{}", id)
-    } else {
-        format!("{}_{}", title, id)
-    }
+    // legacy helper retained but now filenames are ULID-only; we still keep the function
+    id.to_string()
 }
 
 fn sanitize_title(s: &str) -> String {
@@ -139,7 +148,11 @@ async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
 }
 
 fn write_text_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("tags.tmp");
+    // create a temp filename next to the target by appending .tmp to the filename
+    let mut tmp = path.to_path_buf();
+    if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
+        tmp.set_file_name(format!("{}.tmp", fname));
+    }
     let mut f = fs::File::create(&tmp)?;
     f.write_all(text.as_bytes())?;
     f.sync_all()?;

@@ -10,7 +10,7 @@ use std::{fs, process::{Command, Stdio}, time::{SystemTime, Duration}, env};
 // networking imports removed — server is launched as a child owned by the TUI
 use std::path::PathBuf;
 // mpsc types used directly where needed
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, TimeZone};
 use crossterm::{execute, terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen}};
 use crossterm::event::{self, Event as CEvent, KeyCode};
 use signal_hook::consts::signal::*;
@@ -289,7 +289,12 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
     for (path, effective, meta, title, tags, meta_ts) in files.into_iter() {
         // prefer explicit metadata timestamp if present, otherwise fall back to the file mtime
         let ts_string = if let Some(sts) = meta_ts {
-            DateTime::<Local>::from(chrono::NaiveDateTime::from_timestamp_opt(sts, 0).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0,0)).and_local_timezone(Local).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string()
+            // construct a Local DateTime from unix seconds in a non-deprecated way
+            if let Some(dt) = Local.timestamp_opt(sts, 0).single() {
+                dt.format("%Y-%m-%d %H:%M:%S").to_string()
+            } else {
+                DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
+            }
         } else {
             // effective is either file mtime or converted meta timestamp; if meta_ts absent, effective==file mtime
             DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
@@ -449,8 +454,12 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                 // if metadata provides an explicit timestamp, prefer it for ordering/display
                 let mut use_mtime = mtime;
                 if let Some(sts) = meta_ts {
-                    // build display timestamp from unix seconds
-                    real_entry.0 = DateTime::<Local>::from(chrono::NaiveDateTime::from_timestamp_opt(sts, 0).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0,0)).and_local_timezone(Local).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string();
+                    // build display timestamp from unix seconds using Local.timestamp_opt
+                    if let Some(dt) = Local.timestamp_opt(sts, 0).single() {
+                        real_entry.0 = dt.format("%Y-%m-%d %H:%M:%S").to_string();
+                    } else {
+                        // fallback: keep the entry timestamp we already had
+                    }
                     // prefer metadata timestamp when deciding insertion order
                     if sts >= 0 {
                         use_mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(sts as u64);
@@ -923,25 +932,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(vchunks[0]);
             // within the left area (chunks[0]) split into Tags and Dumps.
             // Make the Dumps box a fixed outer width so its inner content width is exactly
-            // 19 characters (timestamp width). Block borders add 2 characters, so set
-            // the outer length to 21.
+            // 20 characters (optional indent + timestamp). Block borders add 2 characters,
+            // so set the outer length to 22.
             let left_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(10), Constraint::Length(21)].as_ref())
+                // Outer length = inner width (21) + 2 for block borders
+                .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
                 .split(chunks[0]);
 
             // Render a table with a single column: timestamp. Titles are omitted from the Dumps box.
             let rows: Vec<Row> = display_indices
                 .iter()
-                .filter_map(|&i| entries.get(i))
-                .map(|(ts, _title, _size_str)| {
-                    Row::new(vec![Cell::from(ts.clone())])
+                .filter_map(|&i| entries.get(i).map(|e| (i, e.clone())))
+                .map(|(i, (ts, _title, _size_str))| {
+                    // indicator column: '>' for the currently selected master index, otherwise space
+                    // Only indent the focused dump's timestamp. No visible indicator is shown;
+                    // focused rows get one leading space, others have none.
+                    // focused dump should be offset two spaces to the right; non-focused
+                    // dumps are unindented. Prefix is applied only for the selected row.
+                    let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                    let cell = format!("{}{}", prefix, ts);
+                Row::new(vec![Cell::from(cell)])
                 })
                 .collect();
 
-            let table = Table::new(rows)
-                .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19)])
+                let table_block = Block::default().borders(Borders::ALL).title("Dumps");
+                let table = Table::new(rows)
+                .block(table_block.clone())
+                .widths(&[Constraint::Length(21)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
@@ -972,6 +990,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     f.render_stateful_widget(table, left_chunks[1], &mut display_state);
                 } else {
                     f.render_widget(table, left_chunks[1]);
+                }
+
+                // draw a marker glyph '>' at the leftmost column of the focused display row
+                if let Some(master_sel) = state.selected() {
+                    if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) {
+                        // inner area of the table block (where rows are drawn)
+                        let inner = table_block.inner(left_chunks[1]);
+                        struct Marker;
+                        impl Widget for Marker {
+                            fn render(self, area: Rect, buf: &mut Buffer) {
+                                let y = area.y as u16;
+                                buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD));
+                            }
+                        }
+                        // limit to visible rows
+                        if display_pos < inner.height as usize {
+                            let mut area = inner;
+                            area.y = inner.y + display_pos as u16;
+                            area.height = 1;
+                            f.render_widget(Marker, area);
+                        }
+                    }
                 }
             }
 
@@ -1322,20 +1362,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .split(vchunks[0]);
                             let left_chunks = Layout::default()
                                 .direction(Direction::Horizontal)
-                                .constraints([Constraint::Min(10), Constraint::Length(21)].as_ref())
+                                // Outer length = inner width (21) + 2 for block borders
+                                .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
                                 .split(chunks[0]);
 
-                            // rebuild and render the Table for redraw (timestamp | title)
+                            // rebuild and render the Table for redraw (timestamp-only list)
                             let rows: Vec<Row> = entries
                                 .iter()
-                                .map(|(ts, _title, _size_str)| {
-                                    Row::new(vec![Cell::from(ts.clone())])
+                                .enumerate()
+                                .map(|(i, (ts, _title, _size_str))| {
+                                    // display prefix for selected master index: two-space indent for focused dump
+                                    // non-focused dumps are unindented
+                                    let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                                    let cell = format!("{}{}", prefix, ts);
+                                    Row::new(vec![Cell::from(cell)])
                                 })
                                 .collect();
 
+                            let table_block = Block::default().borders(Borders::ALL).title("Dumps");
                             let table = Table::new(rows)
-                                .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                .widths(&[Constraint::Length(19)]);
+                                .block(table_block.clone())
+                                .widths(&[Constraint::Length(21)]);
 
                             f.render_stateful_widget(table, left_chunks[1], &mut state);
 

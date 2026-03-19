@@ -23,6 +23,7 @@ signal-hook = "0.3"
 libc = "0.2"
 notify = "5"
 unicode-width = "0.1"
+tempfile = "3"
 
 [[bin]]
 name = "tui"

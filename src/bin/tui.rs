@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
-use tui::widgets::{Block, Borders, Paragraph, Wrap, Table, Row, Cell, Widget};
+use tui::widgets::{Block, Borders, Paragraph, Table, Row, Cell, Widget};
 use tui::buffer::Buffer;
 use tui::layout::Rect;
 use tui::style::{Style, Modifier};
@@ -33,7 +33,7 @@ fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Er
     // Read up to 64KB for preview and return the file contents as-is
     // (do not reformat/pretty-print JSON here; show the file text exactly as stored).
     let f = std::fs::File::open(path)?;
-    let mut reader = std::io::BufReader::new(f);
+    let reader = std::io::BufReader::new(f);
     let mut buf = String::new();
     reader.take(64 * 1024).read_to_string(&mut buf)?;
     Ok(buf)
@@ -102,6 +102,12 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
                 if !path.is_file() {
                     return None;
                 }
+                // Only include dump JSON files; skip metadata sidecars like *.metadata.json
+                if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+                    if !fname.ends_with(".json") || fname.ends_with(".metadata.json") {
+                        return None;
+                    }
+                }
                 let meta = path.metadata().ok();
                 let mtime = meta.as_ref().and_then(|m| m.modified().ok());
                 let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -159,6 +165,12 @@ fn get_mtime(path: &std::path::Path) -> Option<SystemTime> {
 fn build_entry_from_path(path: &std::path::Path) -> Option<((String, String, String), SystemTime)> {
     if !path.is_file() {
         return None;
+    }
+    // skip metadata sidecar files
+    if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+        if fname.ends_with(".metadata.json") {
+            return None;
+        }
     }
     let meta = path.metadata().ok()?;
     let mtime = meta.modified().ok()?;
@@ -247,10 +259,15 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
             if let Some((entry, mtime)) = build_entry_from_path(&p) {
                 // read metadata for this path
                 let (title_meta, tags_meta) = read_metadata_for_path(&p, dumps_dir);
+                // if metadata provides a title, override the entry title we built from filename
+                let mut real_entry = entry.clone();
+                if !title_meta.is_empty() {
+                    real_entry.1 = title_meta;
+                }
                 // find if path already exists in our list
                 if let Some(pos) = paths.iter().position(|x| x == &p) {
                     // update existing entry
-                    entries[pos] = entry;
+                    entries[pos] = real_entry.clone();
                     tags_vec[pos] = tags_meta;
                     // if this is the selected item, refresh preview
                     if state.selected() == Some(pos) {
@@ -263,7 +280,7 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                             if mtime > emtime {
                                 paths.insert(i, p.clone());
-                                entries.insert(i, entry.clone());
+                                entries.insert(i, real_entry.clone());
                                 tags_vec.insert(i, tags_meta.clone());
                             // if we inserted before the selected index, shift selection down to keep same item
                             if let Some(sel) = state.selected() {
@@ -277,7 +294,7 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     }
                     if !inserted {
                         paths.push(p.clone());
-                        entries.push(entry);
+                        entries.push(real_entry);
                         tags_vec.push(tags_meta);
                     }
                     // if nothing selected, select the first item
@@ -454,6 +471,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if !path.is_file() {
                     return None;
                 }
+                // skip metadata sidecars
+                if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+                    if fname.ends_with(".metadata.json") {
+                        return None;
+                    }
+                }
                 let meta = path.metadata().ok();
                 let mtime = meta.as_ref().and_then(|m| m.modified().ok());
                 let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -476,20 +499,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut paths = Vec::new();
     // parallel vector holding tags for each path (may be empty)
     let mut tags_vec: Vec<Vec<String>> = Vec::new();
-    for (path, mtime, size) in files.iter() {
-        let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
-
-        // derive title from filename format: [title]_[id].json
-        let mut base = fname.clone();
-        if base.ends_with(".json") {
-            base.truncate(base.len() - 5);
-        }
-        let title = if let Some(idx) = base.rfind('_') {
-            let t = &base[..idx];
-            if t.is_empty() { "".to_string() } else { t.to_string() }
+            for (path, mtime, size) in files.iter() {
+                let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
+        // derive title from metadata if available, otherwise fall back to filename format: [title]_[id].json
+        let (meta_title, _meta_tags) = read_metadata_for_path(path, &dumps_dir);
+        let title = if !meta_title.is_empty() {
+            meta_title
         } else {
-            "".to_string()
+            let mut base = fname.clone();
+            if base.ends_with(".json") {
+                base.truncate(base.len() - 5);
+            }
+            if let Some(idx) = base.rfind('_') {
+                let t = &base[..idx];
+                if t.is_empty() { "".to_string() } else { t.to_string() }
+            } else {
+                "".to_string()
+            }
         };
 
         let size_str = human_size(*size);
@@ -722,7 +749,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Paragraph::new(acc)
                 } else {
-                    let title_w = UnicodeWidthStr::width(title.as_str());
+                            // title may be empty; show metadata-derived titles which are already stored in entries
+                            let title_w = UnicodeWidthStr::width(title.as_str());
                     let max_title_w = width.saturating_sub(size_w + 1);
                     let title_display = if title_w > max_title_w {
                         // truncate and add ellipsis
@@ -958,6 +986,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
+    use tempfile::tempdir;
 
     #[test]
     fn test_human_size_basic() {
@@ -972,9 +1001,10 @@ mod tests {
     #[test]
     fn test_build_entry_from_path_extracts_title_and_size() {
         // create a temporary file in the system temp dir
-        let mut path = std::env::temp_dir();
+        let dir = tempdir().expect("tempdir");
+        let mut path = dir.path().to_path_buf();
         let fname = format!("2026-03-18_test-title-{}_.json", uuid::Uuid::new_v4());
-        path.push(fname);
+        path.push(&fname);
 
         let data = b"{\"x\":1}\n";
         {
@@ -997,5 +1027,28 @@ mod tests {
 
         // cleanup
         let _ = fs::remove_file(&path);
+        // tempdir drops
+    }
+
+    #[test]
+    fn test_scan_dumps_ignores_metadata_and_reads_titles() {
+        let dir = tempdir().expect("tempdir");
+        let dumps_dir = dir.path();
+
+        // create a dump file and a metadata file
+        let id = "00000000000000000000000000";
+        let dump_path = dumps_dir.join(format!("{}.json", id));
+        fs::write(&dump_path, b"{\"a\":1}\n").expect("write dump");
+        let meta = serde_json::json!({"title": "Meta Title", "tags": ["t1","t2"]});
+        let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+        fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).expect("write meta");
+
+        let (entries, paths, tags_vec) = scan_dumps(dumps_dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(tags_vec.len(), 1);
+        let (_ts, title, _size) = &entries[0];
+        assert_eq!(title, "Meta Title");
+        assert_eq!(tags_vec[0], vec!["t1".to_string(), "t2".to_string()]);
     }
 }

@@ -1,7 +1,8 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
 // run with axum's `serve` helper using a TcpListener
 use tokio::net::TcpListener;
-use chrono::Utc;
+// chrono::Utc is not currently used; keep import commented for future use
+// use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use std::path::PathBuf;
 use std::env;
@@ -51,30 +52,20 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
     match save_bytes(&path, &body).await {
         Ok(_) => {
             // Build metadata object with optional title and tags and write atomically next to the dump
-            // read header value case-insensitively and tolerate non-ideal header names
-            fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
-                let target = name.to_ascii_lowercase();
-                for (k, v) in headers.iter() {
-                    let mut kstr = k.as_str().to_ascii_lowercase();
-                    // normalize underscore variants
-                    kstr = kstr.replace('_', "-");
-                    if kstr == target {
-                        // try to decode as utf8, but fall back to lossy conversion
-                        let val = v.to_str().map(|s| s.to_string()).unwrap_or_else(|_| String::from_utf8_lossy(v.as_bytes()).into_owned());
-                        return Some(val);
-                    }
-                }
-                None
-            }
-
-            let title_str = header_value(&headers, "rubbish-title").unwrap_or_default();
+            let title_str = headers
+                .get("rubbish-title")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
 
             let mut tags_vec: Vec<String> = Vec::new();
-            if let Some(tags_str) = header_value(&headers, "rubbish-tags") {
-                for t in tags_str.split(',') {
-                    let tt = t.trim();
-                    if !tt.is_empty() {
-                        tags_vec.push(tt.to_string());
+            if let Some(tags_val) = headers.get("rubbish-tags") {
+                if let Ok(tags_str) = tags_val.to_str() {
+                    for t in tags_str.split(',') {
+                        let tt = t.trim();
+                        if !tt.is_empty() {
+                            tags_vec.push(tt.to_string());
+                        }
                     }
                 }
             }
@@ -97,11 +88,13 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
     }
 }
 
-fn make_filename(headers: &HeaderMap, id: &str) -> String {
-    // legacy helper retained but now filenames are ULID-only; we still keep the function
+#[allow(dead_code)]
+fn make_filename(_headers: &HeaderMap, id: &str) -> String {
+    // legacy helper retained but now filenames are ULID-only
     id.to_string()
 }
 
+#[allow(dead_code, unused)]
 fn sanitize_title(s: &str) -> String {
     // keep alphanumeric, dash, underscore and spaces; convert spaces to underscore;
     // collapse runs and truncate to 60 chars

@@ -90,15 +90,7 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-fn right_align(text: &str, width: usize) -> String {
-    let len = text.chars().count();
-    if len >= width {
-        text.to_string()
-    } else {
-        let pad = std::iter::repeat(' ').take(width - len).collect::<String>();
-        format!("{}{}", pad, text)
-    }
-}
+// right_align is unused after removing the size column from the table
 
 fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>) {
     let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();

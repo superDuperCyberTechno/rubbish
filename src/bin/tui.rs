@@ -1511,19 +1511,19 @@ mod tests {
 
         let mut sel: HashSet<String> = HashSet::new();
         // empty selection -> all indices
-        let all = filter_indices(&sel, &tags_vec);
+        let all = filter_indices_mode(&sel, &tags_vec, true);
         assert_eq!(all, vec![0,1,2]);
 
         sel.insert("a".to_string());
-        let a_idxs = filter_indices(&sel, &tags_vec);
+        let a_idxs = filter_indices_mode(&sel, &tags_vec, true);
         assert_eq!(a_idxs, vec![0,2]);
 
         sel.insert("b".to_string());
-        let ab_idxs = filter_indices(&sel, &tags_vec);
+        let ab_idxs = filter_indices_mode(&sel, &tags_vec, true);
         assert_eq!(ab_idxs, vec![0]);
 
         sel.insert("z".to_string());
-        let none = filter_indices(&sel, &tags_vec);
+        let none = filter_indices_mode(&sel, &tags_vec, true);
         assert!(none.is_empty());
     }
 
@@ -1542,5 +1542,40 @@ mod tests {
         sel.insert("d".to_string());
         let union2 = filter_indices_mode(&sel, &tags_vec, false);
         assert_eq!(union2, vec![0,1,2]);
+    }
+
+    #[test]
+    fn test_read_metadata_timestamp_seconds_and_millis() {
+        let dir = tempdir().expect("tempdir");
+        let dumps_dir = dir.path();
+
+        // create a dump file
+        let id = "ts_test_id";
+        let dump_path = dumps_dir.join(format!("{}.json", id));
+        fs::write(&dump_path, b"{}\n").expect("write dump");
+
+        // metadata with timestamp in seconds (should be preserved)
+        let ts_secs: i64 = 1_700_000_000; // plausible seconds value
+        let meta_secs = serde_json::json!({"title": "S", "tags": ["t"], "timestamp": ts_secs});
+        let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+        fs::write(&meta_path, serde_json::to_string(&meta_secs).unwrap()).expect("write meta secs");
+
+        let (_title, _tags, parsed_secs) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_secs, Some(ts_secs));
+
+        // metadata with timestamp in milliseconds (should be normalized to seconds)
+        let ts_millis: i64 = ts_secs * 1000;
+        let meta_millis = serde_json::json!({"title": "M", "tags": ["t"], "timestamp": ts_millis});
+        fs::write(&meta_path, serde_json::to_string(&meta_millis).unwrap()).expect("write meta millis");
+
+        let (_title2, _tags2, parsed_millis) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_millis, Some(ts_secs));
+
+        // metadata with numeric-string milliseconds
+        let meta_millis_str = serde_json::json!({"title":"MS","tags":["t"],"timestamp": ts_millis.to_string()});
+        fs::write(&meta_path, serde_json::to_string(&meta_millis_str).unwrap()).expect("write meta millis str");
+
+        let (_title3, _tags3, parsed_millis_str) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_millis_str, Some(ts_secs));
     }
 }

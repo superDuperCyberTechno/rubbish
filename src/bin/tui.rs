@@ -648,11 +648,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(preview_widget, inner);
 
             // status line spanning full width, below the boxes
-            let status_text = match state.selected().and_then(|i| entries.get(i)) {
-                Some((_ts, title, _size)) if !title.is_empty() => title.clone(),
-                _ => "".to_string(),
+            // build status line: left = full title, right = size (right-aligned)
+            let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {
+                let width = vchunks[1].width as usize;
+                let size_w = UnicodeWidthStr::width(size_str.as_str());
+                if size_w >= width {
+                    // size itself doesn't fit; truncate it to the available width
+                    let mut acc = String::new();
+                    let mut cur_w = 0usize;
+                    for ch in size_str.chars() {
+                        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                        if cur_w + cw > width { break; }
+                        acc.push(ch);
+                        cur_w += cw;
+                    }
+                    Paragraph::new(acc)
+                } else {
+                    let title_w = UnicodeWidthStr::width(title.as_str());
+                    let max_title_w = width.saturating_sub(size_w + 1);
+                    let title_display = if title_w > max_title_w {
+                        // truncate and add ellipsis
+                        let mut acc = String::new();
+                        let mut cur_w = 0usize;
+                        for ch in title.chars() {
+                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                            if cur_w + cw + 3 > max_title_w { break; }
+                            acc.push(ch);
+                            cur_w += cw;
+                        }
+                        acc.push_str("...");
+                        acc
+                    } else {
+                        title.clone()
+                    };
+                    let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + size_w);
+                    let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+                    Paragraph::new(format!("{}{}{}", title_display, pad, size_str))
+                }
+            } else {
+                Paragraph::new("")
             };
-            let status = Paragraph::new(status_text);
             f.render_widget(status, vchunks[1]);
         })?;
 
@@ -777,11 +812,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 f.render_widget(preview_widget, inner);
 
                                 // status line spanning full width, below the boxes
-                                let status_text = match state.selected().and_then(|i| entries.get(i)) {
-                                    Some((_ts, title, _size)) if !title.is_empty() => title.clone(),
-                                    _ => "".to_string(),
+                                let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {
+                                    let width = vchunks[1].width as usize;
+                                    let size_w = UnicodeWidthStr::width(size_str.as_str());
+                                    if size_w >= width {
+                                        let mut acc = String::new();
+                                        let mut cur_w = 0usize;
+                                        for ch in size_str.chars() {
+                                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                                            if cur_w + cw > width { break; }
+                                            acc.push(ch);
+                                            cur_w += cw;
+                                        }
+                                        Paragraph::new(acc)
+                                    } else {
+                                        let title_w = UnicodeWidthStr::width(title.as_str());
+                                        let max_title_w = width.saturating_sub(size_w + 1);
+                                        let title_display = if title_w > max_title_w {
+                                            let mut acc = String::new();
+                                            let mut cur_w = 0usize;
+                                            for ch in title.chars() {
+                                                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                                                if cur_w + cw + 3 > max_title_w { break; }
+                                                acc.push(ch);
+                                                cur_w += cw;
+                                            }
+                                            acc.push_str("...");
+                                            acc
+                                        } else {
+                                            title.clone()
+                                        };
+                                        let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + size_w);
+                                        let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+                                        Paragraph::new(format!("{}{}{}", title_display, pad, size_str))
+                                    }
+                                } else {
+                                    Paragraph::new("")
                                 };
-                                let status = Paragraph::new(status_text);
                                 f.render_widget(status, vchunks[1]);
                             });
                         }

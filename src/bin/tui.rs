@@ -618,18 +618,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(vchunks[0]);
 
-            // Render a table with three columns: timestamp | title | size
+            // Render a table with two columns: timestamp | title
             let rows: Vec<Row> = entries
                 .iter()
-                .map(|(ts, title, size_str)| {
+                .map(|(ts, title, _size_str)| {
                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
+                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
                 })
                 .collect();
 
             let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)])
+                .widths(&[Constraint::Length(19), Constraint::Min(10)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
@@ -790,18 +790,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                                 .split(vchunks[0]);
 
-                            // rebuild and render the Table for redraw
+                            // rebuild and render the Table for redraw (timestamp | title)
                             let rows: Vec<Row> = entries
                                 .iter()
-                                .map(|(ts, title, size_str)| {
+                                .map(|(ts, title, _size_str)| {
                                     let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc), Cell::from(right_align(&size_str, 12))])
+                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
                                 })
                                 .collect();
 
                             let table = Table::new(rows)
                                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                .widths(&[Constraint::Length(19), Constraint::Min(10), Constraint::Length(12)]);
+                                .widths(&[Constraint::Length(19), Constraint::Min(10)]);
 
                             f.render_stateful_widget(table, chunks[0], &mut state);
 

@@ -569,12 +569,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start the server as a child process owned by the TUI so it stops when the TUI exits.
     // Prefer a compiled binary in target/debug, otherwise use `cargo run --bin rubbish`.
     let server_child: Option<std::process::Child> = {
+        // determine log directory: prefer XDG_DATA_HOME/rubbish, otherwise ~/.local/share/rubbish
+        let mut log_dir: PathBuf = match env::var("XDG_DATA_HOME") {
+            Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish"),
+            _ => match env::var("HOME") {
+                Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish"),
+                Err(_) => PathBuf::from("."),
+            },
+        };
+        // Ensure directory exists; fall back to current dir on failure
+        if let Err(e) = fs::create_dir_all(&log_dir) {
+            eprintln!("warning: failed to create log dir {}: {}\nFalling back to current directory", log_dir.display(), e);
+            log_dir = PathBuf::from(".");
+        }
+        let log_path = log_dir.join("server.log");
+
         // Try to open a server log file for stdout/stderr capture. Fall back to null if unavailable.
-        let log_path = "server.log";
-        let (stdout_dest, stderr_dest) = match fs::OpenOptions::new().create(true).append(true).open(log_path) {
+        let (stdout_dest, stderr_dest) = match fs::OpenOptions::new().create(true).append(true).open(&log_path) {
             Ok(f) => match f.try_clone() {
                 Ok(f2) => {
-                    eprintln!("server logs -> {}", log_path);
+                    eprintln!("server logs -> {}", log_path.display());
                     (Stdio::from(f), Stdio::from(f2))
                 }
                 Err(_) => {
@@ -583,7 +597,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             },
             Err(_) => {
-                eprintln!("warning: failed to open server log file '{}'; logging disabled", log_path);
+                eprintln!("warning: failed to open server log file '{}'; logging disabled", log_path.display());
                 (Stdio::null(), Stdio::null())
             }
         };

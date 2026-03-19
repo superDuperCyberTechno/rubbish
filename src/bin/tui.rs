@@ -569,37 +569,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // start the server as a child process owned by the TUI so it stops when the TUI exits.
     // Prefer a compiled binary in target/debug, otherwise use `cargo run --bin rubbish`.
     let server_child: Option<std::process::Child> = {
-        // determine log directory: prefer XDG_DATA_HOME/rubbish, otherwise ~/.local/share/rubbish
-        let mut log_dir: PathBuf = match env::var("XDG_DATA_HOME") {
-            Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish"),
-            _ => match env::var("HOME") {
-                Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish"),
-                Err(_) => PathBuf::from("."),
-            },
-        };
-        // Ensure directory exists; fall back to current dir on failure
-        if let Err(e) = fs::create_dir_all(&log_dir) {
-            eprintln!("warning: failed to create log dir {}: {}\nFalling back to current directory", log_dir.display(), e);
-            log_dir = PathBuf::from(".");
-        }
-        let log_path = log_dir.join("server.log");
-
-        // Try to open a server log file for stdout/stderr capture. Fall back to null if unavailable.
-        let (stdout_dest, stderr_dest) = match fs::OpenOptions::new().create(true).append(true).open(&log_path) {
-            Ok(f) => match f.try_clone() {
-                Ok(f2) => {
-                    eprintln!("server logs -> {}", log_path.display());
-                    (Stdio::from(f), Stdio::from(f2))
-                }
+        // Determine server logging behavior. By default do not create a workspace log file
+        // to avoid clutter; the server child's stdout/stderr will be discarded. Use the
+        // environment variable `RUBBISH_SERVER_LOG` to control behavior:
+        // - unset (default): discard server output (Stdio::null())
+        // - "inherit": inherit stdout/stderr so server logs appear in the terminal
+        // - any other value: treated as a path to append to (created) for logging
+        let server_log_cfg = env::var("RUBBISH_SERVER_LOG").ok();
+        let (stdout_dest, stderr_dest) = match server_log_cfg.as_deref() {
+            Some("inherit") => (Stdio::inherit(), Stdio::inherit()),
+            Some("null") => (Stdio::null(), Stdio::null()),
+            Some(path) => match fs::OpenOptions::new().create(true).append(true).open(path) {
+                Ok(f) => match f.try_clone() {
+                    Ok(f2) => {
+                        eprintln!("server logs -> {}", path);
+                        (Stdio::from(f), Stdio::from(f2))
+                    }
+                    Err(_) => {
+                        eprintln!("warning: failed to clone server log file; disabling logging");
+                        (Stdio::null(), Stdio::null())
+                    }
+                },
                 Err(_) => {
-                    eprintln!("warning: failed to clone server log file; disabling logging");
+                    eprintln!("warning: failed to open server log file '{}'; logging disabled", path);
                     (Stdio::null(), Stdio::null())
                 }
             },
-            Err(_) => {
-                eprintln!("warning: failed to open server log file '{}'; logging disabled", log_path.display());
-                (Stdio::null(), Stdio::null())
-            }
+            None => (Stdio::null(), Stdio::null()),
         };
 
         // Try several candidate server executables in order before falling back to `cargo run`.
@@ -615,22 +611,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !cmd.exists() {
                 continue;
             }
-            // open fresh log file handles for each spawn attempt
-            match fs::OpenOptions::new().create(true).append(true).open(log_path) {
-                Ok(f1) => {
-                    match f1.try_clone() {
-                        Ok(f2) => {
-                            server_spawn = Command::new(c).stdout(Stdio::from(f1)).stderr(Stdio::from(f2)).spawn();
-                        }
-                        Err(_) => {
-                            server_spawn = Command::new(c).stdout(Stdio::from(f1)).stderr(Stdio::null()).spawn();
-                        }
-                    }
-                }
-                Err(_) => {
-                    server_spawn = Command::new(c).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-                }
-            }
+            // Use configured stdout/stderr destinations (do not create server.log implicitly)
+            server_spawn = Command::new(c).stdout(stdout_dest.try_clone().unwrap_or(Stdio::null())).stderr(stderr_dest.try_clone().unwrap_or(Stdio::null())).spawn();
             if server_spawn.is_ok() { break; }
         }
         if server_spawn.is_err() {

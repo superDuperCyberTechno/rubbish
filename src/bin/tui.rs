@@ -198,23 +198,7 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-// Return indices of entries whose tags contain all selected_tags (intersection semantics).
-fn filter_indices(selected_tags: &HashSet<String>, tags_vec: &Vec<Vec<String>>) -> Vec<usize> {
-    if selected_tags.is_empty() {
-        return (0..tags_vec.len()).collect();
-    }
-    let need: Vec<&String> = selected_tags.iter().collect();
-    let mut out: Vec<usize> = Vec::new();
-    for (i, tv) in tags_vec.iter().enumerate() {
-        let mut ok = true;
-        for t in need.iter() {
-            if !tv.iter().any(|x| x == *t) { ok = false; break; }
-        }
-        if ok { out.push(i); }
-    }
-    out
-}
-
+// (filter_indices removed — use filter_indices_mode for both match_all and match_any)
 // Supports two modes: match_all = true means a dump must contain all selected tags (intersection).
 // match_all = false means a dump is included if it contains any selected tag (union).
 fn filter_indices_mode(selected_tags: &HashSet<String>, tags_vec: &Vec<Vec<String>>, match_all: bool) -> Vec<usize> {

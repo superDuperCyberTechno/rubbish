@@ -92,7 +92,7 @@ fn human_size(bytes: u64) -> String {
 
 // right_align is unused after removing the size column from the table
 
-fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>) {
+fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>, Vec<Vec<String>>) {
     let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
     if let Ok(rd) = fs::read_dir(dumps_dir) {
         files = rd
@@ -116,28 +116,39 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
 
     let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut paths: Vec<std::path::PathBuf> = Vec::new();
+    let mut tags_vec: Vec<Vec<String>> = Vec::new();
     for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
-
-        // filename format: [title]_[id].json -> extract title as everything before the last '_'
-        let mut base = fname.clone();
-        if base.ends_with(".json") {
-            base.truncate(base.len() - 5);
+        // filename is ULID.json; attempt to read metadata at ULID.metadata.json
+        let mut title = String::new();
+        let mut tags: Vec<String> = Vec::new();
+        if fname.ends_with(".json") {
+            let id = &fname[..fname.len() - 5];
+            let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+            if let Ok(s) = std::fs::read_to_string(&meta_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
+                        title = t.to_string();
+                    }
+                    if let Some(arr) = v.get("tags").and_then(|x| x.as_array()) {
+                        for it in arr.iter() {
+                            if let Some(tsv) = it.as_str() {
+                                tags.push(tsv.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
-        let title = if let Some(idx) = base.rfind('_') {
-            let t = &base[..idx];
-            if t.is_empty() { "".to_string() } else { t.to_string() }
-        } else {
-            "".to_string()
-        };
 
         let size_str = human_size(*size);
         entries.push((ts, title, size_str));
         paths.push(path.clone());
+        tags_vec.push(tags);
     }
 
-    (entries, paths)
+    (entries, paths, tags_vec)
 }
 
 fn get_mtime(path: &std::path::Path) -> Option<SystemTime> {
@@ -172,12 +183,40 @@ fn build_entry_from_path(path: &std::path::Path) -> Option<((String, String, Str
     Some(((ts, title, size_str), mtime))
 }
 
-fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, state: &mut TableState, preview: &mut String) {
+// Read metadata (title, tags) corresponding to a dump file path.
+fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -> (String, Vec<String>) {
+    let mut title = String::new();
+    let mut tags: Vec<String> = Vec::new();
+    if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+        if fname.ends_with(".json") {
+            let id = &fname[..fname.len() - 5];
+            let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+            if let Ok(s) = std::fs::read_to_string(&meta_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                    if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
+                        title = t.to_string();
+                    }
+                    if let Some(arr) = v.get("tags").and_then(|x| x.as_array()) {
+                        for it in arr.iter() {
+                            if let Some(tsv) = it.as_str() {
+                                tags.push(tsv.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (title, tags)
+}
+
+fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, tags_vec: &mut Vec<Vec<String>>, state: &mut TableState, preview: &mut String) {
     match ev {
         WatchEvent::Rescan => {
-            let (new_entries, new_paths) = scan_dumps(dumps_dir);
+            let (new_entries, new_paths, new_tags) = scan_dumps(dumps_dir);
             *entries = new_entries;
             *paths = new_paths;
+            *tags_vec = new_tags;
             if entries.is_empty() {
                 *preview = "(no preview available)".to_string();
                 state.select(None);
@@ -206,10 +245,13 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
 
             // if file exists, build entry
             if let Some((entry, mtime)) = build_entry_from_path(&p) {
+                // read metadata for this path
+                let (title_meta, tags_meta) = read_metadata_for_path(&p, dumps_dir);
                 // find if path already exists in our list
                 if let Some(pos) = paths.iter().position(|x| x == &p) {
                     // update existing entry
                     entries[pos] = entry;
+                    tags_vec[pos] = tags_meta;
                     // if this is the selected item, refresh preview
                     if state.selected() == Some(pos) {
                         *preview = read_preview(&p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
@@ -219,9 +261,10 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
                         let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                        if mtime > emtime {
-                            paths.insert(i, p.clone());
-                            entries.insert(i, entry.clone());
+                            if mtime > emtime {
+                                paths.insert(i, p.clone());
+                                entries.insert(i, entry.clone());
+                                tags_vec.insert(i, tags_meta.clone());
                             // if we inserted before the selected index, shift selection down to keep same item
                             if let Some(sel) = state.selected() {
                                 if i <= sel {
@@ -235,6 +278,7 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     if !inserted {
                         paths.push(p.clone());
                         entries.push(entry);
+                        tags_vec.push(tags_meta);
                     }
                     // if nothing selected, select the first item
                     if state.selected().is_none() {
@@ -244,13 +288,14 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         }
                     }
                 }
-            } else {
-                // file missing or unreadable -> remove if present
-                if let Some(pos) = paths.iter().position(|x| x == &p) {
-                    paths.remove(pos);
-                    entries.remove(pos);
-                    // adjust selection
-                    match state.selected() {
+                } else {
+                    // file missing or unreadable -> remove if present
+                    if let Some(pos) = paths.iter().position(|x| x == &p) {
+                        paths.remove(pos);
+                        entries.remove(pos);
+                        tags_vec.remove(pos);
+                        // adjust selection
+                        match state.selected() {
                         Some(sel) if sel == pos => {
                             if entries.is_empty() {
                                 state.select(None);
@@ -275,6 +320,7 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
             if let Some(pos) = paths.iter().position(|x| x == &p) {
                 paths.remove(pos);
                 entries.remove(pos);
+                tags_vec.remove(pos);
                 match state.selected() {
                     Some(sel) if sel == pos => {
                         if entries.is_empty() {
@@ -428,6 +474,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // entries: (timestamp, title, size_str)
     let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut paths = Vec::new();
+    // parallel vector holding tags for each path (may be empty)
+    let mut tags_vec: Vec<Vec<String>> = Vec::new();
     for (path, mtime, size) in files.iter() {
         let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
@@ -447,6 +495,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let size_str = human_size(*size);
         entries.push((ts, title, size_str));
         paths.push(path.clone());
+        // attempt to read metadata for tags
+        let (_t, tg) = read_metadata_for_path(path, &dumps_dir);
+        tags_vec.push(tg);
     }
 
     // initial preview for selected item (used by TTY and non-TTY flows)
@@ -596,7 +647,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // handle filesystem events (non-blocking) and apply incremental updates
         if let Ok(ev) = fs_rx.try_recv() {
-            apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut state, &mut preview);
+            apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut tags_vec, &mut state, &mut preview);
         }
         terminal.draw(|f| {
             let size = f.size();
@@ -644,8 +695,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
 
-            // Tags box on the left of Dumps
-            let tags_block = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
+            // Tags box on the left of Dumps — show tags for selected dump (or a helpful placeholder)
+            let tags_text = match state.selected() {
+                Some(i) => {
+                    tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string())
+                }
+                None => "(no tags)".to_string(),
+            };
+            let tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
             f.render_widget(tags_block, left_chunks[0]);
 
             // status line spanning full width, below the boxes
@@ -816,8 +873,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
 
-                                // Tags box on the left of Dumps
-                                let tags_block = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
+                                // Tags box on the left of Dumps — show tags for selected dump
+                                let tags_text = match state.selected() {
+                                    Some(i) => {
+                                        tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string())
+                                    }
+                                    None => "(no tags)".to_string(),
+                                };
+                                let tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
                                 f.render_widget(tags_block, left_chunks[0]);
 
                                 // status line spanning full width, below the boxes

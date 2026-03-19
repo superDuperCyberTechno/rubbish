@@ -51,20 +51,30 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
     match save_bytes(&path, &body).await {
         Ok(_) => {
             // Build metadata object with optional title and tags and write atomically next to the dump
-            let title_str = headers
-                .get("rubbish-title")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .to_string();
+            // read header value case-insensitively and tolerate non-ideal header names
+            fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
+                let target = name.to_ascii_lowercase();
+                for (k, v) in headers.iter() {
+                    let mut kstr = k.as_str().to_ascii_lowercase();
+                    // normalize underscore variants
+                    kstr = kstr.replace('_', "-");
+                    if kstr == target {
+                        // try to decode as utf8, but fall back to lossy conversion
+                        let val = v.to_str().map(|s| s.to_string()).unwrap_or_else(|_| String::from_utf8_lossy(v.as_bytes()).into_owned());
+                        return Some(val);
+                    }
+                }
+                None
+            }
+
+            let title_str = header_value(&headers, "rubbish-title").unwrap_or_default();
 
             let mut tags_vec: Vec<String> = Vec::new();
-            if let Some(tags_val) = headers.get("rubbish-tags") {
-                if let Ok(tags_str) = tags_val.to_str() {
-                    for t in tags_str.split(',') {
-                        let tt = t.trim();
-                        if !tt.is_empty() {
-                            tags_vec.push(tt.to_string());
-                        }
+            if let Some(tags_str) = header_value(&headers, "rubbish-tags") {
+                for t in tags_str.split(',') {
+                    let tt = t.trim();
+                    if !tt.is_empty() {
+                        tags_vec.push(tt.to_string());
                     }
                 }
             }

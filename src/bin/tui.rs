@@ -609,6 +609,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(vchunks[0]);
+            // within the left area (chunks[0]) split into Tags and Dumps (Tags takes 50% of the Dumps-box)
+            let left_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .split(chunks[0]);
 
             // Render a table with two columns: timestamp | title
             let rows: Vec<Row> = entries
@@ -627,9 +632,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if entries.is_empty() {
                 // draw an empty placeholder in the table area
                 let empty = Paragraph::new("(no dumps found)").block(Block::default().borders(Borders::ALL).title("Dumps"));
-                f.render_widget(empty, chunks[0]);
+                f.render_widget(empty, left_chunks[1]);
             } else {
-                f.render_stateful_widget(table, chunks[0], &mut state);
+                f.render_stateful_widget(table, left_chunks[1], &mut state);
             }
 
             // Use RawPreview to render lines truncated to the available width with no wrapping.
@@ -638,6 +643,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
+
+            // Tags box on the left of Dumps
+            let tags_block = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
+            f.render_widget(tags_block, left_chunks[0]);
 
             // status line spanning full width, below the boxes
             // build status line: left = full title, right = size (right-aligned)
@@ -781,6 +790,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .direction(Direction::Horizontal)
                                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                                 .split(vchunks[0]);
+                            let left_chunks = Layout::default()
+                                .direction(Direction::Horizontal)
+                                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                                .split(chunks[0]);
 
                             // rebuild and render the Table for redraw (timestamp | title)
                             let rows: Vec<Row> = entries
@@ -795,13 +808,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
                                 .widths(&[Constraint::Length(19), Constraint::Min(10)]);
 
-                            f.render_stateful_widget(table, chunks[0], &mut state);
+                            f.render_stateful_widget(table, left_chunks[1], &mut state);
 
                                 let preview_widget = RawPreview { text: &preview };
                                 let block = Block::default().borders(Borders::ALL).title("Preview");
                                 let inner = block.inner(chunks[1]);
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
+
+                                // Tags box on the left of Dumps
+                                let tags_block = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
+                                f.render_widget(tags_block, left_chunks[0]);
 
                                 // status line spanning full width, below the boxes
                                 let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {

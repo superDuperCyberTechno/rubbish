@@ -608,10 +608,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         terminal.draw(|f| {
             let size = f.size();
+            // reserve one line at the bottom for a full-width status line
+            let vchunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
+                .split(size);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                .split(size);
+                .split(vchunks[0]);
 
             // Render a table with three columns: timestamp | title | size
             let rows: Vec<Row> = entries
@@ -641,6 +646,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
+
+            // status line spanning full width, below the boxes
+            let status = Paragraph::new("This is the statusline");
+            f.render_widget(status, vchunks[1]);
         })?;
 
         // handle input or signals
@@ -732,11 +741,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // Small delay to allow terminal to settle, then redraw the TUI so the screen is restored
                             std::thread::sleep(Duration::from_millis(100));
                             let _ = terminal.draw(|f| {
-                                let size = f.size();
-                                let chunks = Layout::default()
-                                    .direction(Direction::Horizontal)
-                                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                                    .split(size);
+                            let size = f.size();
+                            let vchunks = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
+                                .split(size);
+                            let chunks = Layout::default()
+                                .direction(Direction::Horizontal)
+                                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                                .split(vchunks[0]);
 
                             // rebuild and render the Table for redraw
                             let rows: Vec<Row> = entries
@@ -758,6 +771,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let inner = block.inner(chunks[1]);
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
+
+                                // status line spanning full width, below the boxes
+                                let status = Paragraph::new("This is the statusline");
+                                f.render_widget(status, vchunks[1]);
                             });
                         }
                     }

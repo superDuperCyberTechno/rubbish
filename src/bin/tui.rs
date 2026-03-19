@@ -921,10 +921,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(vchunks[0]);
-            // within the left area (chunks[0]) split into Tags and Dumps (Tags takes 50% of the Dumps-box)
+            // within the left area (chunks[0]) split into Tags and Dumps.
+            // Make the Dumps box a fixed outer width so its inner content width is exactly
+            // 19 characters (timestamp width). Block borders add 2 characters, so set
+            // the outer length to 21.
             let left_chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                .constraints([Constraint::Min(10), Constraint::Length(21)].as_ref())
                 .split(chunks[0]);
 
             // Render a table with a single column: timestamp. Titles are omitted from the Dumps box.
@@ -1068,7 +1071,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Esc => break,
-                    KeyCode::Left => {
+                    // vim-style left
+                    KeyCode::Left | KeyCode::Char('h') => {
                         focus = Focus::Tags;
                         // when focusing tags, select the first tag of the currently selected dump
                         // within the global unique_tags list so Up/Down navigates the global list.
@@ -1087,10 +1091,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tags_selected = None;
                         }
                     }
-                    KeyCode::Right => {
+                    // vim-style right
+                    KeyCode::Right | KeyCode::Char('l') => {
                         focus = Focus::Dumps;
                     }
-                    KeyCode::Up => {
+                    // vim-style up
+                    KeyCode::Up | KeyCode::Char('k') => {
                         match focus {
                             Focus::Dumps => {
                                 // move selection within the filtered view (display_indices)
@@ -1125,7 +1131,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    KeyCode::Down => {
+                    // vim-style down
+                    KeyCode::Down | KeyCode::Char('j') => {
                         match focus {
                             Focus::Dumps => {
                                 // move selection within the filtered view (display_indices)
@@ -1315,7 +1322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .split(vchunks[0]);
                             let left_chunks = Layout::default()
                                 .direction(Direction::Horizontal)
-                                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+                                .constraints([Constraint::Min(10), Constraint::Length(21)].as_ref())
                                 .split(chunks[0]);
 
                             // rebuild and render the Table for redraw (timestamp | title)
@@ -1328,7 +1335,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             let table = Table::new(rows)
                                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                                .widths(&[Constraint::Length(19), Constraint::Min(10)]);
+                                .widths(&[Constraint::Length(19)]);
 
                             f.render_stateful_widget(table, left_chunks[1], &mut state);
 

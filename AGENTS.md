@@ -3,6 +3,8 @@ This project is a Rust-based dump-server, running in the terminal. It must be ru
 - Any dump will be listed in the TUI.
 - Dumps will be listed with a timestamp and a potential title.
 - Dump titles will be extracted from the dump header `rubbish-title`.
+ - Dumps will be listed with a timestamp.
+ - Dump titles (from the `rubbish-title` header) are shown in the status line and in the preview/pager, but the Dumps list itself displays the timestamp only.
 - When a dump is accessed, open it with jless (crates.io/crates/jless)
 - jless will be available in PATH.
 - After each change, commit with a fitting message.

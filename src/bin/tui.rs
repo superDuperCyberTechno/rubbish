@@ -881,10 +881,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // filtering mode: true = match all selected tags (intersection), false = match any (union)
     let mut match_all: bool = true;
 
-    // detect whether `jless` is available in PATH. If not present, disable the Enter
-    // keybinding for opening dumps. We intentionally do not fall back to `less` or
-    // `cat` here so the application has no external runtime dependency on a pager.
-    let has_jless: bool = Command::new("jless").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    // detect whether a pager is available in PATH. Prefer `jless`, but fall back to
+    // `less` if jless is not present. If neither is available, Enter will be a no-op.
+    let pager_cmd: Option<String> = if Command::new("jless").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+        Some("jless".to_string())
+    } else if Command::new("less").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false) {
+        Some("less".to_string())
+    } else {
+        None
+    };
 
     // Setup signal handling to gracefully exit and restore terminal
     let (sig_tx, sig_rx) = channel();
@@ -1293,141 +1298,125 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     KeyCode::Enter => {
-                        // Only respond to Enter if jless is present. Otherwise Enter is disabled.
-                        if !has_jless {
-                            // ignore
-                        } else if let Some(i) = state.selected() {
-                            // open jless while keeping this process running; leave alternate screen,
-                            // run jless, then re-enter alternate screen and continue
-                            let path = paths[i].clone();
+                        if let Some(pager) = pager_cmd.clone() {
+                            if let Some(i) = state.selected() {
+                                let path = paths[i].clone();
 
-                            // restore terminal to normal
-                            let _ = disable_raw_mode();
-                            let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-                            let _ = terminal.show_cursor();
+                                // restore terminal to normal
+                                let _ = disable_raw_mode();
+                                let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+                                let _ = terminal.show_cursor();
 
-                            // run jless (blocking) and forward signals while it runs
-                            let child = Command::new("jless").arg(&path).spawn();
+                                // spawn pager and forward signals while it runs
+                                let child = Command::new(pager).arg(&path).spawn();
 
-                            if let Ok(mut child) = child {
-                                // while child is running, forward any received signals to the child
-                                loop {
-                                    if let Ok(sig) = sig_rx.try_recv() {
-                                        unsafe { libc::kill(child.id() as i32, sig); }
-                                    }
-                                    match child.try_wait() {
-                                        Ok(Some(_)) => break,
-                                        Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                                        Err(_) => break,
-                                    }
-                                }
-                            }
-
-                            // Recreate terminal backend and re-enter alternate screen so the TUI is fully restored.
-                            let mut stdout = io::stdout();
-                            execute!(stdout, EnterAlternateScreen)?;
-                            let backend = CrosstermBackend::new(stdout);
-                            terminal = Terminal::new(backend)?;
-                            let _ = enable_raw_mode();
-
-                            // refresh preview for current selection
-                            preview = read_preview(&path).unwrap_or_else(|e| format!("failed to read preview: {}", e));
-
-                            // Small delay to allow terminal to settle, then redraw the TUI so the screen is restored
-                            std::thread::sleep(Duration::from_millis(100));
-                            let _ = terminal.draw(|f| {
-                                let size = f.size();
-                                let vchunks = Layout::default()
-                                    .direction(Direction::Vertical)
-                                    .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
-                                    .split(size);
-                                let chunks = Layout::default()
-                                    .direction(Direction::Horizontal)
-                                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
-                                    .split(vchunks[0]);
-                                let left_chunks = Layout::default()
-                                    .direction(Direction::Horizontal)
-                                    // Outer length = inner width (21) + 2 for block borders
-                                    .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
-                                    .split(chunks[0]);
-
-                                // rebuild and render the Table for redraw (timestamp-only list)
-                                let rows: Vec<Row> = entries
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, (ts, _title, _size_str))| {
-                                        let prefix = if Some(i) == state.selected() { "  " } else { "" };
-                                        let cell = format!("{}{}", prefix, ts);
-                                        Row::new(vec![Cell::from(cell)])
-                                    })
-                                    .collect();
-
-                                let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-                                let table = Table::new(rows)
-                                    .block(table_block.clone())
-                                    .widths(&[Constraint::Length(21)]);
-
-                                f.render_stateful_widget(table, left_chunks[1], &mut state);
-
-                                let preview_widget = RawPreview { text: &preview };
-                                let block = Block::default().borders(Borders::ALL).title("Preview");
-                                let inner = block.inner(chunks[1]);
-                                f.render_widget(block, chunks[1]);
-                                f.render_widget(preview_widget, inner);
-
-                                // Tags box on the left of Dumps — show tags for selected dump; style when focused
-                                let tags_text = match state.selected() {
-                                    Some(i) => {
-                                        tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string())
-                                    }
-                                    None => "(no tags)".to_string(),
-                                };
-                                let mut tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
-                                if focus == Focus::Tags {
-                                    tags_block = tags_block.style(Style::default().add_modifier(Modifier::REVERSED));
-                                }
-                                f.render_widget(tags_block, left_chunks[0]);
-
-                                // status line spanning full width, below the boxes
-                                let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {
-                                    let width = vchunks[1].width as usize;
-                                    let size_w = UnicodeWidthStr::width(size_str.as_str());
-                                    if size_w >= width {
-                                        let mut acc = String::new();
-                                        let mut cur_w = 0usize;
-                                        for ch in size_str.chars() {
-                                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                                            if cur_w + cw > width { break; }
-                                            acc.push(ch);
-                                            cur_w += cw;
+                                if let Ok(mut child) = child {
+                                    loop {
+                                        if let Ok(sig) = sig_rx.try_recv() {
+                                            unsafe { libc::kill(child.id() as i32, sig); }
                                         }
-                                        Paragraph::new(acc)
-                                    } else {
-                                        let title_w = UnicodeWidthStr::width(title.as_str());
-                                        let max_title_w = width.saturating_sub(size_w + 1);
-                                        let title_display = if title_w > max_title_w {
+                                        match child.try_wait() {
+                                            Ok(Some(_)) => break,
+                                            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                                            Err(_) => break,
+                                        }
+                                    }
+                                }
+
+                                // Recreate terminal backend and re-enter alternate screen
+                                let mut stdout = io::stdout();
+                                execute!(stdout, EnterAlternateScreen)?;
+                                let backend = CrosstermBackend::new(stdout);
+                                terminal = Terminal::new(backend)?;
+                                let _ = enable_raw_mode();
+
+                                // refresh preview for current selection
+                                preview = read_preview(&path).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+
+                                // Small delay then redraw
+                                std::thread::sleep(Duration::from_millis(100));
+                                let _ = terminal.draw(|f| {
+                                    let size = f.size();
+                                    let vchunks = Layout::default()
+                                        .direction(Direction::Vertical)
+                                        .constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref())
+                                        .split(size);
+                                    let chunks = Layout::default()
+                                        .direction(Direction::Horizontal)
+                                        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                                        .split(vchunks[0]);
+                                    let left_chunks = Layout::default()
+                                        .direction(Direction::Horizontal)
+                                        .constraints([Constraint::Min(10), Constraint::Length(23)].as_ref())
+                                        .split(chunks[0]);
+
+                                    // rebuild table rows
+                                    let rows: Vec<Row> = entries
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, (ts, _title, _size_str))| {
+                                            let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                                            let cell = format!("{}{}", prefix, ts);
+                                            Row::new(vec![Cell::from(cell)])
+                                        })
+                                        .collect();
+
+                                    let table_block = Block::default().borders(Borders::ALL).title("Dumps");
+                                    let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]);
+                                    f.render_stateful_widget(table, left_chunks[1], &mut state);
+
+                                    let preview_widget = RawPreview { text: &preview };
+                                    let block = Block::default().borders(Borders::ALL).title("Preview");
+                                    let inner = block.inner(chunks[1]);
+                                    f.render_widget(block, chunks[1]);
+                                    f.render_widget(preview_widget, inner);
+
+                                    // tags box
+                                    let tags_text = match state.selected() {
+                                        Some(i) => tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string()),
+                                        None => "(no tags)".to_string(),
+                                    };
+                                    let mut tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
+                                    if focus == Focus::Tags { tags_block = tags_block.style(Style::default().add_modifier(Modifier::REVERSED)); }
+                                    f.render_widget(tags_block, left_chunks[0]);
+
+                                    // status
+                                    let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {
+                                        let width = vchunks[1].width as usize;
+                                        let size_w = UnicodeWidthStr::width(size_str.as_str());
+                                        if size_w >= width {
                                             let mut acc = String::new();
                                             let mut cur_w = 0usize;
-                                            for ch in title.chars() {
+                                            for ch in size_str.chars() {
                                                 let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                                                if cur_w + cw + 3 > max_title_w { break; }
+                                                if cur_w + cw > width { break; }
                                                 acc.push(ch);
                                                 cur_w += cw;
                                             }
-                                            acc.push_str("...");
-                                            acc
+                                            Paragraph::new(acc)
                                         } else {
-                                            title.clone()
-                                        };
-                                        let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + size_w);
-                                        let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
-                                        Paragraph::new(format!("{}{}{}", title_display, pad, size_str))
-                                    }
-                                } else {
-                                    Paragraph::new("")
-                                };
-                                f.render_widget(status, vchunks[1]);
-                            });
+                                            let title_w = UnicodeWidthStr::width(title.as_str());
+                                            let max_title_w = width.saturating_sub(size_w + 1);
+                                            let title_display = if title_w > max_title_w {
+                                                let mut acc = String::new();
+                                                let mut cur_w = 0usize;
+                                                for ch in title.chars() {
+                                                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                                                    if cur_w + cw + 3 > max_title_w { break; }
+                                                    acc.push(ch);
+                                                    cur_w += cw;
+                                                }
+                                                acc.push_str("...");
+                                                acc
+                                            } else { title.clone() };
+                                            let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + size_w);
+                                            let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+                                            Paragraph::new(format!("{}{}{}", title_display, pad, size_str))
+                                        }
+                                    } else { Paragraph::new("") };
+                                    f.render_widget(status, vchunks[1]);
+                                });
+                            }
                         }
                     }
                     _ => {}

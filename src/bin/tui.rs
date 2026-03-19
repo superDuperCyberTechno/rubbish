@@ -648,7 +648,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(preview_widget, inner);
 
             // status line spanning full width, below the boxes
-            let status = Paragraph::new("This is the statusline");
+            let status_text = match state.selected().and_then(|i| entries.get(i)) {
+                Some((_ts, title, _size)) if !title.is_empty() => title.clone(),
+                _ => "".to_string(),
+            };
+            let status = Paragraph::new(status_text);
             f.render_widget(status, vchunks[1]);
         })?;
 
@@ -773,7 +777,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 f.render_widget(preview_widget, inner);
 
                                 // status line spanning full width, below the boxes
-                                let status = Paragraph::new("This is the statusline");
+                                let status_text = match state.selected().and_then(|i| entries.get(i)) {
+                                    Some((_ts, title, _size)) if !title.is_empty() => title.clone(),
+                                    _ => "".to_string(),
+                                };
+                                let status = Paragraph::new(status_text);
                                 f.render_widget(status, vchunks[1]);
                             });
                         }

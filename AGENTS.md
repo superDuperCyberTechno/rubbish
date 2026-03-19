@@ -5,6 +5,5 @@ This project is a Rust-based dump-server, running in the terminal. It must be ru
 - Dump titles will be extracted from the dump header `rubbish-title`.
 - When a dump is accessed, open it with jless (crates.io/crates/jless)
 - jless will be available in PATH.
-- After each change propose a commit (with a fitting commit message).
-- Never commit on your own.
+- After each change, commit with a fitting message.
 - Never push to origin or propose to do so.

@@ -17,7 +17,7 @@ use signal_hook::consts::signal::*;
 use signal_hook::iterator::Signals;
 use std::sync::mpsc::channel;
 use std::thread;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use atty::Stream;
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
@@ -28,6 +28,83 @@ use tui::style::{Style, Modifier};
 use tui::layout::{Layout, Constraint, Direction};
 use tui::widgets::TableState;
 use unicode_width::UnicodeWidthStr;
+
+// Render tags with precise placement: each tag line shows tag (left) and a count flush to the
+// right edge of the provided area. This avoids table cell padding issues and guarantees
+// the count is adjacent to the right border.
+struct RawTags<'a> {
+    tags: &'a [String],
+    counts: &'a [usize],
+    selected_tags: &'a HashSet<String>,
+    focus: bool,
+    tags_selected: Option<usize>,
+}
+
+impl<'a> Widget for RawTags<'a> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let mut y = area.y as u16;
+        let max_lines = area.height as usize;
+        let max_width = area.width as usize;
+        for (i, tag) in self.tags.iter().enumerate() {
+            if i >= max_lines { break; }
+            let count = self.counts.get(i).copied().unwrap_or(0);
+            let count_str = format!("{}", count);
+            let count_w = UnicodeWidthStr::width(count_str.as_str());
+
+            // prepare prefix marker
+            let prefix = if self.selected_tags.contains(tag) { "> " } else { "" };
+            let prefix_w = UnicodeWidthStr::width(prefix);
+
+            // compute available width for tag text so it doesn't overlap the count
+            let avail_for_tag = if max_width > count_w { max_width - count_w } else { 0 };
+            let avail_for_tag = avail_for_tag.saturating_sub(prefix_w);
+
+            // truncate tag to fit
+            let mut display_tag = String::new();
+            let mut cur_w = 0usize;
+            for ch in tag.chars() {
+                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                if cur_w + cw > avail_for_tag { break; }
+                display_tag.push(ch);
+                cur_w += cw;
+            }
+            if display_tag.len() < tag.len() && avail_for_tag >= 3 {
+                // add ellipsis if truncated
+                if cur_w + 3 <= avail_for_tag {
+                    display_tag.push_str("...");
+                }
+            }
+
+            let left_text = format!("{}{}", prefix, display_tag);
+
+            // determine styles: highlight if focused and this tag is selected index
+            let mut style = Style::default();
+            let highlighted = if self.focus {
+                if let Some(sel) = self.tags_selected { sel == i } else { false }
+            } else { false };
+            if highlighted {
+                style = style.add_modifier(Modifier::REVERSED);
+            }
+
+            // If highlighted, fill the entire row with the highlight style so the whole
+            // line (tag, padding, count) appears selected.
+            if highlighted {
+                let fill = std::iter::repeat(' ').take(max_width).collect::<String>();
+                buf.set_stringn(area.x, y, &fill, max_width, style);
+            }
+
+            // write left_text at left edge (will appear on top of fill if highlighted)
+            buf.set_stringn(area.x, y, &left_text, max_width, style);
+
+            // compute x for count so its last cell is at area.x + area.width - 1 using displayed width
+            let x_count = area.x + (area.width as u16).saturating_sub(count_w as u16);
+            // write count (no truncation needed)
+            buf.set_stringn(x_count, y, &count_str, count_str.len(), style);
+
+            y += 1;
+        }
+    }
+}
 
 fn read_preview(path: &std::path::Path) -> Result<String, Box<dyn std::error::Error>> {
     // Read up to 64KB for preview and return the file contents as-is
@@ -90,66 +167,136 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+// Truncate a string to fit within `max_w` display width (unicode-aware). If truncation
+// occurs, append "...". `max_w` is in display cells.
+// NOTE: truncate_display removed — titles are no longer shown in the Dumps box.
+
+// Natural-like comparator: compare numeric runs numerically, otherwise case-insensitive.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut ai = a.chars().peekable();
+    let mut bi = b.chars().peekable();
+    loop {
+        if ai.peek().is_none() && bi.peek().is_none() { return Ordering::Equal; }
+        if ai.peek().is_none() { return Ordering::Less; }
+        if bi.peek().is_none() { return Ordering::Greater; }
+        if ai.peek().unwrap().is_ascii_digit() && bi.peek().unwrap().is_ascii_digit() {
+            let mut an = String::new();
+            while ai.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) { an.push(ai.next().unwrap()); }
+            let mut bn = String::new();
+            while bi.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) { bn.push(bi.next().unwrap()); }
+            let ai_num = an.trim_start_matches('0').parse::<u128>().ok().unwrap_or(0);
+            let bi_num = bn.trim_start_matches('0').parse::<u128>().ok().unwrap_or(0);
+            if ai_num != bi_num { return ai_num.cmp(&bi_num); }
+            continue;
+        }
+        let ac = ai.next().unwrap();
+        let bc = bi.next().unwrap();
+        let acu = ac.to_ascii_lowercase();
+        let bcu = bc.to_ascii_lowercase();
+        if acu != bcu { return acu.cmp(&bcu); }
+    }
+}
+
+// Return indices of entries whose tags contain all selected_tags (intersection semantics).
+fn filter_indices(selected_tags: &HashSet<String>, tags_vec: &Vec<Vec<String>>) -> Vec<usize> {
+    if selected_tags.is_empty() {
+        return (0..tags_vec.len()).collect();
+    }
+    let need: Vec<&String> = selected_tags.iter().collect();
+    let mut out: Vec<usize> = Vec::new();
+    for (i, tv) in tags_vec.iter().enumerate() {
+        let mut ok = true;
+        for t in need.iter() {
+            if !tv.iter().any(|x| x == *t) { ok = false; break; }
+        }
+        if ok { out.push(i); }
+    }
+    out
+}
+
+// Supports two modes: match_all = true means a dump must contain all selected tags (intersection).
+// match_all = false means a dump is included if it contains any selected tag (union).
+fn filter_indices_mode(selected_tags: &HashSet<String>, tags_vec: &Vec<Vec<String>>, match_all: bool) -> Vec<usize> {
+    if selected_tags.is_empty() {
+        return (0..tags_vec.len()).collect();
+    }
+    let need: Vec<&String> = selected_tags.iter().collect();
+    let mut out: Vec<usize> = Vec::new();
+    for (i, tv) in tags_vec.iter().enumerate() {
+        if match_all {
+            let mut ok = true;
+            for t in need.iter() {
+                if !tv.iter().any(|x| x == *t) { ok = false; break; }
+            }
+            if ok { out.push(i); }
+        } else {
+            // match any
+            let mut ok = false;
+            for t in need.iter() {
+                if tv.iter().any(|x| x == *t) { ok = true; break; }
+            }
+            if ok { out.push(i); }
+        }
+    }
+    out
+}
+
 // right_align is unused after removing the size column from the table
 
 fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>, Vec<Vec<String>>) {
-    let mut files: Vec<(std::path::PathBuf, Option<SystemTime>, u64)> = Vec::new();
+    // Collect dumps and prefer a server-provided metadata timestamp for ordering when available.
+    // We read the metadata for each file up-front so we can sort by the metadata timestamp
+    // (fallback to file mtime when metadata timestamp is absent).
+    let mut files: Vec<(std::path::PathBuf, SystemTime, std::fs::Metadata, String, Vec<String>, Option<i64>)> = Vec::new();
     if let Ok(rd) = fs::read_dir(dumps_dir) {
-        files = rd
-            .filter_map(|e| e.ok())
-            .map(|e| {
-                let path = e.path();
-                if !path.is_file() {
-                    return None;
+        for e in rd.filter_map(|e| e.ok()) {
+            let path = e.path();
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
+                if !fname.ends_with(".json") || fname.ends_with(".metadata.json") {
+                    continue;
                 }
-                // Only include dump JSON files; skip metadata sidecars like *.metadata.json
-                if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
-                    if !fname.ends_with(".json") || fname.ends_with(".metadata.json") {
-                        return None;
+            }
+            if let Ok(meta) = e.metadata() {
+                let file_mtime = meta.modified().ok().unwrap_or(SystemTime::UNIX_EPOCH);
+                // read metadata for title/tags/timestamp
+                let (title, tags, meta_ts) = read_metadata_for_path(&path, &dumps_dir);
+                // compute effective time: prefer meta_ts when available
+                let effective = if let Some(sts) = meta_ts {
+                    if sts >= 0 {
+                        SystemTime::UNIX_EPOCH + Duration::from_secs(sts as u64)
+                    } else {
+                        SystemTime::UNIX_EPOCH
                     }
-                }
-                let meta = path.metadata().ok();
-                let mtime = meta.as_ref().and_then(|m| m.modified().ok());
-                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-                Some((path, mtime, size))
-            })
-            .filter_map(|x| x)
-            .collect();
+                } else {
+                    file_mtime
+                };
+                files.push((path, effective, meta, title, tags, meta_ts));
+            }
+        }
     }
 
-    files.sort_by_key(|(_, mtime, _)| mtime.unwrap_or(SystemTime::UNIX_EPOCH));
+    // sort newest first by effective timestamp
+    files.sort_by_key(|(_, eff, ..)| *eff);
     files.reverse();
 
     let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut paths: Vec<std::path::PathBuf> = Vec::new();
     let mut tags_vec: Vec<Vec<String>> = Vec::new();
-    for (path, mtime, size) in files.iter() {
-        let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
-        // filename is ULID.json; attempt to read metadata at ULID.metadata.json
-        let mut title = String::new();
-        let mut tags: Vec<String> = Vec::new();
-        if fname.ends_with(".json") {
-            let id = &fname[..fname.len() - 5];
-            let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
-            if let Ok(s) = std::fs::read_to_string(&meta_path) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                    if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
-                        title = t.to_string();
-                    }
-                    if let Some(arr) = v.get("tags").and_then(|x| x.as_array()) {
-                        for it in arr.iter() {
-                            if let Some(tsv) = it.as_str() {
-                                tags.push(tsv.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    for (path, effective, meta, title, tags, meta_ts) in files.into_iter() {
+        // prefer explicit metadata timestamp if present, otherwise fall back to the file mtime
+        let ts_string = if let Some(sts) = meta_ts {
+            DateTime::<Local>::from(chrono::NaiveDateTime::from_timestamp_opt(sts, 0).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0,0)).and_local_timezone(Local).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string()
+        } else {
+            // effective is either file mtime or converted meta timestamp; if meta_ts absent, effective==file mtime
+            DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
+        };
 
-        let size_str = human_size(*size);
-        entries.push((ts, title, size_str));
+        let size_str = human_size(meta.len());
+        entries.push((ts_string, title, size_str));
         paths.push(path.clone());
         tags_vec.push(tags);
     }
@@ -159,6 +306,12 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
 
 fn get_mtime(path: &std::path::Path) -> Option<SystemTime> {
     path.metadata().and_then(|m| m.modified()).ok()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Tags,
+    Dumps,
 }
 
 // Build display entry (timestamp, title, size_str) and return mtime for sorting.
@@ -196,9 +349,11 @@ fn build_entry_from_path(path: &std::path::Path) -> Option<((String, String, Str
 }
 
 // Read metadata (title, tags) corresponding to a dump file path.
-fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -> (String, Vec<String>) {
+fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -> (String, Vec<String>, Option<i64>) {
+    // returns (title, tags, optional_unix_ts_seconds)
     let mut title = String::new();
     let mut tags: Vec<String> = Vec::new();
+    let mut timestamp: Option<i64> = None;
     if let Some(fname) = path.file_name().and_then(|s| s.to_str()) {
         if fname.ends_with(".json") {
             let id = &fname[..fname.len() - 5];
@@ -215,20 +370,47 @@ fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -
                             }
                         }
                     }
+                    // prefer an explicit unix timestamp field in metadata
+                    if let Some(tv) = v.get("timestamp") {
+                        // accept number or numeric string; detect milliseconds vs seconds
+                        if let Some(n) = tv.as_i64() {
+                            timestamp = Some(n);
+                        } else if let Some(un) = tv.as_u64() {
+                            // clamp to i64 range
+                            timestamp = Some(un as i64);
+                        } else if let Some(sv) = tv.as_str() {
+                            if let Ok(parsed) = sv.parse::<i64>() {
+                                timestamp = Some(parsed);
+                            }
+                        }
+                        // normalize milliseconds to seconds if value seems like millis
+                        if let Some(tsv) = timestamp {
+                            if tsv.abs() > 3_000_000_000i64 { // > ~ 2065-11-20 in seconds
+                                // treat as milliseconds
+                                timestamp = Some(tsv / 1000);
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    (title, tags)
+    (title, tags, timestamp)
 }
 
-fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, tags_vec: &mut Vec<Vec<String>>, state: &mut TableState, preview: &mut String) {
+fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, tags_vec: &mut Vec<Vec<String>>, selected_tags: &mut HashSet<String>, state: &mut TableState, preview: &mut String) {
     match ev {
         WatchEvent::Rescan => {
             let (new_entries, new_paths, new_tags) = scan_dumps(dumps_dir);
             *entries = new_entries;
             *paths = new_paths;
-            *tags_vec = new_tags;
+            *tags_vec = new_tags.clone();
+            // rebuild global selected_tags to remove any tags that no longer exist
+            let mut all: HashSet<String> = HashSet::new();
+            for t in tags_vec.iter().flat_map(|v| v.iter()) {
+                all.insert(t.clone());
+            }
+            selected_tags.retain(|t| all.contains(t));
             if entries.is_empty() {
                 *preview = "(no preview available)".to_string();
                 state.select(None);
@@ -257,12 +439,22 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
 
             // if file exists, build entry
             if let Some((entry, mtime)) = build_entry_from_path(&p) {
-                // read metadata for this path
-                let (title_meta, tags_meta) = read_metadata_for_path(&p, dumps_dir);
+                // read metadata for this path (title/tags/timestamp)
+                let (title_meta, tags_meta, meta_ts) = read_metadata_for_path(&p, dumps_dir);
                 // if metadata provides a title, override the entry title we built from filename
                 let mut real_entry = entry.clone();
                 if !title_meta.is_empty() {
                     real_entry.1 = title_meta;
+                }
+                // if metadata provides an explicit timestamp, prefer it for ordering/display
+                let mut use_mtime = mtime;
+                if let Some(sts) = meta_ts {
+                    // build display timestamp from unix seconds
+                    real_entry.0 = DateTime::<Local>::from(chrono::NaiveDateTime::from_timestamp_opt(sts, 0).unwrap_or_else(|| chrono::NaiveDateTime::from_timestamp(0,0)).and_local_timezone(Local).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string();
+                    // prefer metadata timestamp when deciding insertion order
+                    if sts >= 0 {
+                        use_mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(sts as u64);
+                    }
                 }
                 // find if path already exists in our list
                 if let Some(pos) = paths.iter().position(|x| x == &p) {
@@ -274,14 +466,24 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         *preview = read_preview(&p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
                     }
                 } else {
-                    // determine insertion index based on mtime (newest first)
+                    // determine insertion index based on effective mtime (newest first)
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
-                        let emtime = get_mtime(existing).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                            if mtime > emtime {
-                                paths.insert(i, p.clone());
-                                entries.insert(i, real_entry.clone());
-                                tags_vec.insert(i, tags_meta.clone());
+                        // compute existing effective time: if it has metadata, prefer its metadata timestamp when available
+                        let existing_meta_ts = read_metadata_for_path(existing, dumps_dir).2;
+                        let existing_effective = if let Some(est) = existing_meta_ts {
+                            if est >= 0 {
+                                SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64)
+                            } else {
+                                get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH)
+                            }
+                        } else {
+                            get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH)
+                        };
+                        if use_mtime > existing_effective {
+                            paths.insert(i, p.clone());
+                            entries.insert(i, real_entry.clone());
+                            tags_vec.insert(i, tags_meta.clone());
                             // if we inserted before the selected index, shift selection down to keep same item
                             if let Some(sel) = state.selected() {
                                 if i <= sel {
@@ -338,6 +540,7 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                 paths.remove(pos);
                 entries.remove(pos);
                 tags_vec.remove(pos);
+                        // nothing to do for global selected_tags
                 match state.selected() {
                     Some(sel) if sel == pos => {
                         if entries.is_empty() {
@@ -499,11 +702,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut paths = Vec::new();
     // parallel vector holding tags for each path (may be empty)
     let mut tags_vec: Vec<Vec<String>> = Vec::new();
+    // global selected tags across all dumps
+    let mut selected_tags: HashSet<String> = HashSet::new();
             for (path, mtime, size) in files.iter() {
                 let fname = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 let ts = mtime.as_ref().map(|t| DateTime::<Local>::from(*t).format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_else(|| "unknown".into());
         // derive title from metadata if available, otherwise fall back to filename format: [title]_[id].json
-        let (meta_title, _meta_tags) = read_metadata_for_path(path, &dumps_dir);
+        let (meta_title, _meta_tags, _meta_ts) = read_metadata_for_path(path, &dumps_dir);
         let title = if !meta_title.is_empty() {
             meta_title
         } else {
@@ -523,7 +728,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         entries.push((ts, title, size_str));
         paths.push(path.clone());
         // attempt to read metadata for tags
-        let (_t, tg) = read_metadata_for_path(path, &dumps_dir);
+        let (_t, tg, _meta_ts) = read_metadata_for_path(path, &dumps_dir);
         tags_vec.push(tg);
     }
 
@@ -660,6 +865,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         state.select(Some(0));
     }
 
+    // tags selection index: start at 0 for the first dump if it has tags
+    let mut tags_selected: Option<usize> = None;
+    // focus (Tags or Dumps). Default to Dumps
+    let mut focus: Focus = Focus::Dumps;
+    // filtering mode: true = match all selected tags (intersection), false = match any (union)
+    let mut match_all: bool = true;
+
     // Setup signal handling to gracefully exit and restore terminal
     let (sig_tx, sig_rx) = channel();
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).unwrap();
@@ -674,8 +886,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         // handle filesystem events (non-blocking) and apply incremental updates
         if let Ok(ev) = fs_rx.try_recv() {
-            apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut tags_vec, &mut state, &mut preview);
+            apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut tags_vec, &mut selected_tags, &mut state, &mut preview);
         }
+        // Build a global unique sorted tag list for the Tags box
+        let mut uniq_set: HashSet<String> = HashSet::new();
+        for v in tags_vec.iter() {
+            for t in v.iter() {
+                uniq_set.insert(t.clone());
+            }
+        }
+        let mut unique_tags: Vec<String> = uniq_set.into_iter().collect();
+        // natural-like sort: split numeric runs and compare numerically when possible
+        unique_tags.sort_by(|a, b| natural_cmp(a, b));
+        // ensure tags_selected is valid for unique_tags; default to first tag when absent
+        if unique_tags.is_empty() {
+            tags_selected = None;
+        } else if tags_selected.is_none() {
+            tags_selected = Some(0);
+        } else if let Some(idx) = tags_selected {
+            if idx >= unique_tags.len() {
+                tags_selected = Some(0);
+            }
+        }
+
+        let display_indices: Vec<usize> = filter_indices_mode(&selected_tags, &tags_vec, match_all);
         terminal.draw(|f| {
             let size = f.size();
             // reserve one line at the bottom for a full-width status line
@@ -693,26 +927,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
                 .split(chunks[0]);
 
-            // Render a table with two columns: timestamp | title
-            let rows: Vec<Row> = entries
+            // Render a table with a single column: timestamp. Titles are omitted from the Dumps box.
+            let rows: Vec<Row> = display_indices
                 .iter()
-                .map(|(ts, title, _size_str)| {
-                    let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
+                .filter_map(|&i| entries.get(i))
+                .map(|(ts, _title, _size_str)| {
+                    Row::new(vec![Cell::from(ts.clone())])
                 })
                 .collect();
 
             let table = Table::new(rows)
                 .block(Block::default().borders(Borders::ALL).title("Dumps"))
-                .widths(&[Constraint::Length(19), Constraint::Min(10)])
+                .widths(&[Constraint::Length(19)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
-                // draw an empty placeholder in the table area
+                // draw an empty placeholder in the table area when there are no dumps at all
                 let empty = Paragraph::new("(no dumps found)").block(Block::default().borders(Borders::ALL).title("Dumps"));
                 f.render_widget(empty, left_chunks[1]);
+            } else if display_indices.is_empty() {
+                // nothing matches the active tag filter
+                let empty = Paragraph::new("(no dumps match selected tags)").block(Block::default().borders(Borders::ALL).title("Dumps"));
+                f.render_widget(empty, left_chunks[1]);
             } else {
-                f.render_stateful_widget(table, left_chunks[1], &mut state);
+                // build a temporary TableState that selects the position within the displayed
+                // rows corresponding to the underlying `state` selection (which indexes the
+                // master entries/paths arrays). This keeps apply_watch_event logic operating
+                // on the master indices while allowing correct highlighting of the filtered view.
+                let mut display_state = tui::widgets::TableState::default();
+                if let Some(master_sel) = state.selected() {
+                    if let Some(pos) = display_indices.iter().position(|&x| x == master_sel) {
+                        display_state.select(Some(pos));
+                    } else {
+                        display_state.select(None);
+                    }
+                } else {
+                    display_state.select(None);
+                }
+
+                if focus == Focus::Dumps {
+                    f.render_stateful_widget(table, left_chunks[1], &mut display_state);
+                } else {
+                    f.render_widget(table, left_chunks[1]);
+                }
             }
 
             // Use RawPreview to render lines truncated to the available width with no wrapping.
@@ -722,59 +979,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
 
-            // Tags box on the left of Dumps — show tags for selected dump (or a helpful placeholder)
-            let tags_text = match state.selected() {
-                Some(i) => {
-                    tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string())
+            // Tags box on the left of Dumps — show one entry per unique tag across all dumps
+            // Include a right-aligned count of how many dumps have that tag.
+            // Render tags as a two-column table: tag (left) and count (right). This allows
+            // precise control over the count column width so counts are visible and right-aligned.
+            if unique_tags.is_empty() {
+                let empty = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
+                f.render_widget(empty, left_chunks[0]);
+            } else {
+                // compute counts for each tag
+                let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len());
+                for t in unique_tags.iter() {
+                    let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count();
+                    counts.push(cnt);
                 }
-                None => "(no tags)".to_string(),
-            };
-            let tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
-            f.render_widget(tags_block, left_chunks[0]);
+
+                // Draw a bordered Tags block and render RawTags inside its inner area so the
+                // counts appear flush against the block's right border.
+                let tags_block = Block::default().borders(Borders::ALL).title("Tags");
+                // render a clone for the block and keep an owned copy to compute inner area
+                let tags_block_clone = tags_block.clone();
+                f.render_widget(tags_block_clone, left_chunks[0]);
+                let inner = tags_block.inner(left_chunks[0]);
+                let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected };
+                f.render_widget(raw, inner);
+            }
 
             // status line spanning full width, below the boxes
-            // build status line: left = full title, right = size (right-aligned)
-            let status = if let Some((_ts, title, size_str)) = state.selected().and_then(|i| entries.get(i)) {
-                let width = vchunks[1].width as usize;
-                let size_w = UnicodeWidthStr::width(size_str.as_str());
-                if size_w >= width {
-                    // size itself doesn't fit; truncate it to the available width
+            // determine selected title and size for status rendering
+            let (sel_title, sel_size) = match state.selected().and_then(|i| entries.get(i)) {
+                Some((_ts, title, size_str)) => (title.clone(), size_str.clone()),
+                None => (String::new(), String::new()),
+            };
+            // Render status line with title (left) and suffix+size (right). Keep title un-truncated
+            // when it fits; otherwise truncate to available space.
+            let width = vchunks[1].width as usize;
+
+            // size should be preserved; prefer showing full title and size. Truncate the
+            // suffix (selected-tags/mode) first if space is tight. Only truncate title as
+            // a last resort.
+            let size_w = UnicodeWidthStr::width(sel_size.as_str());
+            if size_w >= width {
+                // only room for (truncated) size
+                let mut acc = String::new();
+                let mut cur_w = 0usize;
+                for ch in sel_size.chars() {
+                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                    if cur_w + cw > width { break; }
+                    acc.push(ch);
+                    cur_w += cw;
+                }
+                f.render_widget(Paragraph::new(acc), vchunks[1]);
+            } else {
+                // compute max space for title (reserve 1 space between title and right-side)
+                let max_title_w = width.saturating_sub(size_w + 1);
+                let title_w = UnicodeWidthStr::width(sel_title.as_str());
+                let title_display = if title_w <= max_title_w {
+                    sel_title.clone()
+                } else if max_title_w >= 4 {
+                    // truncate and add ellipsis
                     let mut acc = String::new();
                     let mut cur_w = 0usize;
-                    for ch in size_str.chars() {
+                    for ch in sel_title.chars() {
                         let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                        if cur_w + cw > width { break; }
+                        if cur_w + cw + 3 > max_title_w { break; }
                         acc.push(ch);
                         cur_w += cw;
                     }
-                    Paragraph::new(acc)
+                    acc.push_str("...");
+                    acc
                 } else {
-                            // title may be empty; show metadata-derived titles which are already stored in entries
-                            let title_w = UnicodeWidthStr::width(title.as_str());
-                    let max_title_w = width.saturating_sub(size_w + 1);
-                    let title_display = if title_w > max_title_w {
-                        // truncate and add ellipsis
-                        let mut acc = String::new();
-                        let mut cur_w = 0usize;
-                        for ch in title.chars() {
-                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                            if cur_w + cw + 3 > max_title_w { break; }
-                            acc.push(ch);
-                            cur_w += cw;
-                        }
-                        acc.push_str("...");
-                        acc
-                    } else {
-                        title.clone()
-                    };
-                    let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + size_w);
-                    let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
-                    Paragraph::new(format!("{}{}{}", title_display, pad, size_str))
-                }
-            } else {
-                Paragraph::new("")
-            };
-            f.render_widget(status, vchunks[1]);
+                    String::new()
+                };
+
+                // right side only contains the size (we no longer display tag-filter info here)
+                let right_side = sel_size.clone();
+
+                let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + UnicodeWidthStr::width(right_side.as_str()));
+                let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+                let final_line = format!("{}{}{}", title_display, pad, right_side);
+                f.render_widget(Paragraph::new(final_line), vchunks[1]);
+            }
         })?;
 
         // handle input or signals
@@ -783,22 +1068,175 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Esc => break,
+                    KeyCode::Left => {
+                        focus = Focus::Tags;
+                        // when focusing tags, select the first tag of the currently selected dump
+                        // within the global unique_tags list so Up/Down navigates the global list.
+                        if let Some(dsel) = state.selected() {
+                            if let Some(first_tag) = tags_vec.get(dsel).and_then(|v| v.get(0)) {
+                                tags_selected = unique_tags.iter().position(|t| t == first_tag);
+                                // if not found for some reason, default to 0
+                                if tags_selected.is_none() && !unique_tags.is_empty() {
+                                    tags_selected = Some(0);
+                                }
+                            } else {
+                                // dump has no tags -> no tag focused
+                                tags_selected = None;
+                            }
+                        } else {
+                            tags_selected = None;
+                        }
+                    }
+                    KeyCode::Right => {
+                        focus = Focus::Dumps;
+                    }
                     KeyCode::Up => {
-                        if let Some(i) = state.selected() {
-                            let len = entries.len();
-                            let ni = if i == 0 { len - 1 } else { i - 1 };
-                            state.select(Some(ni));
-                            if let Some(p) = paths.get(ni) {
-                                preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                        match focus {
+                            Focus::Dumps => {
+                                // move selection within the filtered view (display_indices)
+                                if entries.is_empty() { /* nothing */ } else {
+                                    if display_indices.is_empty() {
+                                        // no visible items
+                                    } else {
+                                        // find position of current master selection within display_indices
+                                        let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms));
+                                        let new_pos = match cur_pos {
+                                            Some(0) | None => display_indices.len() - 1,
+                                            Some(p) => p - 1,
+                                        };
+                                        let master_idx = display_indices[new_pos];
+                                        state.select(Some(master_idx));
+                                        if let Some(p) = paths.get(master_idx) {
+                                            preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                        }
+                                        // update tags_selected for the newly selected dump
+                                        tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) });
+                                    }
+                                }
+                            }
+                            Focus::Tags => {
+                                if let Some(sel) = tags_selected {
+                                    let len = unique_tags.len();
+                                    if len > 0 {
+                                        let ni = if sel == 0 { len - 1 } else { sel - 1 };
+                                        tags_selected = Some(ni);
+                                    }
+                                }
                             }
                         }
                     }
                     KeyCode::Down => {
-                        if let Some(i) = state.selected() {
-                            let ni = (i + 1) % entries.len();
-                            state.select(Some(ni));
-                            if let Some(p) = paths.get(ni) {
+                        match focus {
+                            Focus::Dumps => {
+                                // move selection within the filtered view (display_indices)
+                                if entries.is_empty() { /* nothing */ } else {
+                                    if display_indices.is_empty() {
+                                        // no visible items
+                                    } else {
+                                        let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms));
+                                        let new_pos = match cur_pos {
+                                            None => 0,
+                                            Some(p) => (p + 1) % display_indices.len(),
+                                        };
+                                        let master_idx = display_indices[new_pos];
+                                        state.select(Some(master_idx));
+                                        if let Some(p) = paths.get(master_idx) {
+                                            preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                        }
+                                        tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) });
+                                    }
+                                }
+                            }
+                           Focus::Tags => {
+                                if let Some(sel) = tags_selected {
+                                    let len = unique_tags.len();
+                                    if len > 0 {
+                                        let ni = (sel + 1) % len;
+                                        tags_selected = Some(ni);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char(' ') => {
+                        // toggle selection of focused tag when Tags has focus
+                        if focus == Focus::Tags {
+                            if let Some(tsel) = tags_selected {
+                                if let Some(tag) = unique_tags.get(tsel) {
+                                    if selected_tags.contains(tag) {
+                                        selected_tags.remove(tag);
+                                    } else {
+                                        selected_tags.insert(tag.clone());
+                                    }
+                                    // after changing the active tag filter, ensure the current master
+                                    // selection is visible. If not, move selection to the first visible
+                                    // entry (if any) and update preview.
+                                    if entries.is_empty() {
+                                        // nothing to do
+                                    } else {
+                                        let new_display: Vec<usize> = if selected_tags.is_empty() { (0..entries.len()).collect() } else {
+                                            let need: Vec<&String> = selected_tags.iter().collect();
+                                            let mut out: Vec<usize> = Vec::new();
+                                            for (i, tv) in tags_vec.iter().enumerate() {
+                                                let mut ok = true;
+                                                for t in need.iter() { if !tv.iter().any(|x| x == *t) { ok = false; break; } }
+                                                if ok { out.push(i); }
+                                            }
+                                            out
+                                        };
+                                        if new_display.is_empty() {
+                                            state.select(None);
+                                            preview = "(no preview available)".to_string();
+                                        } else {
+                                            // if current selection is not in new_display, pick first
+                                            match state.selected() {
+                                                Some(ms) if new_display.iter().any(|&x| x == ms) => {
+                                                    // keep current selection
+                                                }
+                                                _ => {
+                                                    state.select(Some(new_display[0]));
+                                                    if let Some(p) = paths.get(new_display[0]) {
+                                                        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        // clear all selected tags
+                        selected_tags.clear();
+                        // restore selection to first item if available
+                        if !entries.is_empty() {
+                            state.select(Some(0));
+                            if let Some(p) = paths.get(0) {
                                 preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                            }
+                        } else {
+                            state.select(None);
+                            preview = "(no preview available)".to_string();
+                        }
+                    }
+                    KeyCode::Char('m') => {
+                        // toggle matching mode between match-all and match-any
+                        match_all = !match_all;
+                        // After changing mode, ensure current selection is visible or pick first
+                        let new_display = filter_indices_mode(&selected_tags, &tags_vec, match_all);
+                        if new_display.is_empty() {
+                            state.select(None);
+                            preview = "(no preview available)".to_string();
+                        } else {
+                            match state.selected() {
+                                Some(ms) if new_display.iter().any(|&x| x == ms) => {}
+                                _ => {
+                                    state.select(Some(new_display[0]));
+                                    if let Some(p) = paths.get(new_display[0]) {
+                                        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
+                                    }
+                                }
                             }
                         }
                     }
@@ -883,9 +1321,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // rebuild and render the Table for redraw (timestamp | title)
                             let rows: Vec<Row> = entries
                                 .iter()
-                                .map(|(ts, title, _size_str)| {
-                                    let title_trunc = if title.len() > 60 { title.chars().take(57).collect::<String>() + "..." } else { title.clone() };
-                                    Row::new(vec![Cell::from(ts.clone()), Cell::from(title_trunc)])
+                                .map(|(ts, _title, _size_str)| {
+                                    Row::new(vec![Cell::from(ts.clone())])
                                 })
                                 .collect();
 
@@ -901,14 +1338,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 f.render_widget(block, chunks[1]);
                                 f.render_widget(preview_widget, inner);
 
-                                // Tags box on the left of Dumps — show tags for selected dump
+                                // Tags box on the left of Dumps — show tags for selected dump; style when focused
                                 let tags_text = match state.selected() {
                                     Some(i) => {
                                         tags_vec.get(i).map(|v| if v.is_empty() { "(no tags)".to_string() } else { v.join("\n") }).unwrap_or_else(|| "(no tags)".to_string())
                                     }
                                     None => "(no tags)".to_string(),
                                 };
-                                let tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
+                                let mut tags_block = Paragraph::new(tags_text).block(Block::default().borders(Borders::ALL).title("Tags"));
+                                if focus == Focus::Tags {
+                                    tags_block = tags_block.style(Style::default().add_modifier(Modifier::REVERSED));
+                                }
                                 f.render_widget(tags_block, left_chunks[0]);
 
                                 // status line spanning full width, below the boxes
@@ -1050,5 +1490,47 @@ mod tests {
         let (_ts, title, _size) = &entries[0];
         assert_eq!(title, "Meta Title");
         assert_eq!(tags_vec[0], vec!["t1".to_string(), "t2".to_string()]);
+    }
+
+    #[test]
+    fn test_filter_indices_basic() {
+        let mut tags_vec: Vec<Vec<String>> = Vec::new();
+        tags_vec.push(vec!["a".to_string(), "b".to_string()]); // 0
+        tags_vec.push(vec!["b".to_string(), "c".to_string()]); // 1
+        tags_vec.push(vec!["a".to_string(), "c".to_string()]); // 2
+
+        let mut sel: HashSet<String> = HashSet::new();
+        // empty selection -> all indices
+        let all = filter_indices(&sel, &tags_vec);
+        assert_eq!(all, vec![0,1,2]);
+
+        sel.insert("a".to_string());
+        let a_idxs = filter_indices(&sel, &tags_vec);
+        assert_eq!(a_idxs, vec![0,2]);
+
+        sel.insert("b".to_string());
+        let ab_idxs = filter_indices(&sel, &tags_vec);
+        assert_eq!(ab_idxs, vec![0]);
+
+        sel.insert("z".to_string());
+        let none = filter_indices(&sel, &tags_vec);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_filter_indices_mode_union() {
+        let mut tags_vec: Vec<Vec<String>> = Vec::new();
+        tags_vec.push(vec!["a".to_string(), "b".to_string()]); // 0
+        tags_vec.push(vec!["b".to_string(), "c".to_string()]); // 1
+        tags_vec.push(vec!["d".to_string()]); // 2
+
+        let mut sel: HashSet<String> = HashSet::new();
+        sel.insert("b".to_string());
+        let union = filter_indices_mode(&sel, &tags_vec, false);
+        assert_eq!(union, vec![0,1]);
+
+        sel.insert("d".to_string());
+        let union2 = filter_indices_mode(&sel, &tags_vec, false);
+        assert_eq!(union2, vec![0,1,2]);
     }
 }

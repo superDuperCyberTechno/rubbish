@@ -1,8 +1,7 @@
 use axum::{http::HeaderMap, response::IntoResponse, routing::post, Router};
 // run with axum's `serve` helper using a TcpListener
 use tokio::net::TcpListener;
-// chrono::Utc is not currently used; keep import commented for future use
-// use chrono::Utc;
+use chrono::Utc;
 use std::{fs, io::Write, net::SocketAddr};
 use std::path::PathBuf;
 use std::env;
@@ -73,6 +72,8 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
             let meta = serde_json::json!({
                 "title": title_str,
                 "tags": tags_vec,
+                // unix timestamp in seconds added by the server
+                "timestamp": Utc::now().timestamp(),
             });
             let meta_path = path.with_extension("metadata.json");
             if let Err(e) = write_text_atomic(&meta_path, &serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string())) {

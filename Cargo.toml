@@ -2,7 +2,7 @@
 name = "rubbish"
 version = "0.1.0"
 edition = "2021"
-default-run = "tui"
+default-run = "rubbish"
 
 [dependencies]
 axum = "0.8"
@@ -24,10 +24,6 @@ libc = "0.2"
 notify = "5"
 unicode-width = "0.1"
 tempfile = "3"
-
-[[bin]]
-name = "tui"
-path = "src/bin/tui.rs"
 
 [[bin]]
 name = "rubbish"

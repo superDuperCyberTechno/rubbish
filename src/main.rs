@@ -9,23 +9,35 @@ use tokio::signal;
 use tracing::{error, info};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
-    let app = Router::new().route("/dump", post(handle_dump));
+    // Start the TUI in a background thread so we can run the Axum server in this Tokio runtime.
+    // The TUI itself spawns a server child when run in the previous binary layout; to embed
+    // the TUI in a single `rubbish` binary we run the TUI's interactive loop in a blocking
+    // thread while also running the HTTP server on the same process.
+    let tui_handle = std::thread::spawn(move || {
+        if let Err(e) = crate::tui::run_tui() {
+            eprintln!("TUI error: {}", e);
+        }
+    });
 
+    // Run HTTP server using Axum; bind to localhost:7771 as before.
+    let app = Router::new().route("/dump", post(handle_dump));
     let addr = SocketAddr::from(([127, 0, 0, 1], 7771));
     info!(%addr, "starting rubbish dump server");
 
-    // bind a TcpListener and run via axum::serve
     let listener = TcpListener::bind(addr).await.expect("failed to bind");
     let server = axum::serve(listener, app);
 
-    // Run server until ctrl-c
     tokio::select! {
         res = server => if let Err(e) = res { error!(%e, "server error"); },
         _ = signal::ctrl_c() => info!("shutting down"),
     }
+
+    // Wait for the TUI thread to finish before exiting
+    let _ = tui_handle.join();
+    Ok(())
 }
 
 async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoResponse {

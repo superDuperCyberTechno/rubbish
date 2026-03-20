@@ -2,7 +2,7 @@
 name = "rubbish"
 version = "0.1.0"
 edition = "2021"
-default-run = "tui"
+default-run = "rubbish"
 
 [dependencies]
 axum = "0.8"
@@ -28,7 +28,3 @@ tempfile = "3"
 [[bin]]
 name = "rubbish"
 path = "src/main.rs"
-
-[[bin]]
-name = "tui"
-path = "src/bin/tui.rs"

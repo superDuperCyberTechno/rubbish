@@ -360,6 +360,13 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
 enum WatchEvent { Created(std::path::PathBuf), Modified(std::path::PathBuf), Removed(std::path::PathBuf), Rescan }
 
 pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
+    // If stdout or stdin is not a terminal, run in headless mode: no TUI.
+    // This avoids initialization errors when running under non-interactive
+    // environments (CI, background services, etc.).
+    if !(atty::is(atty::Stream::Stdout) && atty::is(atty::Stream::Stdin)) {
+        tracing::info!("TTY not available - running headless (no TUI)");
+        return Ok(());
+    }
     // Determine dumps directory
     let mut dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") { Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"), _ => match env::var("HOME") { Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("dumps"), Err(_) => PathBuf::from("./dumps"), }, };
     if let Err(_e) = fs::create_dir_all(&dumps_dir) { dumps_dir = PathBuf::from("./dumps"); let _ = fs::create_dir_all(&dumps_dir); }

@@ -92,11 +92,27 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "failed to create dumps dir");
     }
 
+    // Validate incoming body is valid JSON. If not, log and return 400 without saving.
+    let parsed = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(%e, "received invalid JSON payload");
+            return (axum::http::StatusCode::BAD_REQUEST, "invalid json");
+        }
+    };
+
     // build filename as: [ulid].json (dump name is ULID)
     let id = ulid::Ulid::new().to_string();
     let path = dumps_dir.join(format!("{}.json", id));
 
-    match save_bytes(&path, &body).await {
+    // pretty-print JSON and ensure trailing newline
+    let mut pretty = match serde_json::to_string_pretty(&parsed) {
+        Ok(s) => s,
+        Err(_) => serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".to_string()),
+    };
+    if !pretty.ends_with('\n') { pretty.push('\n'); }
+
+    match save_bytes(&path, pretty.as_bytes()).await {
         Ok(_) => {
             // Build metadata object with optional title and tags and write atomically next to the dump
             let title_str = headers

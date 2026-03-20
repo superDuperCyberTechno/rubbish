@@ -957,13 +957,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 
 
+            // compute Dumps header title with right-aligned counts C/T
+            let dumps_total = entries.len();
+            let dumps_shown = display_indices.len();
+            let counts_str = format!("{}/{}", dumps_shown, dumps_total);
+            let base_title = "Dumps";
+            let box_w = left_chunks[1].width as usize;
+            let base_w = UnicodeWidthStr::width(base_title);
+            let counts_w = UnicodeWidthStr::width(counts_str.as_str());
+            let pad_count = if box_w > base_w + counts_w { box_w - base_w - counts_w } else { 1 };
+            let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+            let dumps_title = format!("{}{}{}", base_title, pad, counts_str);
+
             if entries.is_empty() {
                 // draw an empty bordered Dumps block when there are no dumps
-                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
+                let empty_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
                 f.render_widget(empty_block, left_chunks[1]);
             } else if display_indices.is_empty() {
                 // draw an empty bordered Dumps block when the active tag filter matches nothing
-                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
+                let empty_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
                 f.render_widget(empty_block, left_chunks[1]);
             } else {
                 // build a temporary TableState that selects the position within the displayed
@@ -982,10 +994,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 // Render table block with a header showing total/visible counts
-                let dumps_total = entries.len();
-                let dumps_shown = display_indices.len();
-                let dumps_title = format!("Dumps {}/{}", dumps_total, dumps_shown);
-                let table_block = Block::default().borders(Borders::ALL).title(dumps_title);
+                // use the previously computed dumps_title (C/T, right-aligned)
+                let table_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
 
                 // Recreate rows for the table area here so we can use them for rendering
                 let table_rows: Vec<Row> = display_indices

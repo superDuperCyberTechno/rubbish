@@ -8,12 +8,11 @@ use std::env;
 use tokio::signal;
 use tracing::{error, info};
 
-#[tokio::main]
-// Embed the TUI module (renamed to avoid colliding with external `tui` crate name)
-mod tui_app;
-// Re-export for clarity when running from other places
-pub use tui_app::run_tui as run_tui;
+// Embed the TUI module (kept in `src/tui.rs`) and expose its runner
+mod tui;
+pub use tui::run_tui as run_tui;
 
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
@@ -22,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the TUI in a single `rubbish` binary we run the TUI's interactive loop in a blocking
     // thread while also running the HTTP server on the same process.
     let tui_handle = std::thread::spawn(move || {
-        if let Err(e) = crate::tui_app::run_tui() {
+        if let Err(e) = crate::tui::run_tui() {
             eprintln!("TUI error: {}", e);
         }
     });

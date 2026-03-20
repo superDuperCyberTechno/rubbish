@@ -938,7 +938,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(chunks[0]);
 
             // Render a table with a single column: timestamp. Titles are omitted from the Dumps box.
-            let rows: Vec<Row> = display_indices
+            // `rows` is kept for legacy use in the Enter/pager redraw path; keep it but allow
+            // the compiler to know the variable is intentionally unused in this scope.
+            let _rows: Vec<Row> = display_indices
                 .iter()
                 .filter_map(|&i| entries.get(i).map(|e| (i, e.clone())))
                 .map(|(i, (ts, _title, _size_str))| {
@@ -953,11 +955,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect();
 
-                let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-                let table = Table::new(rows)
-                .block(table_block.clone())
-                .widths(&[Constraint::Length(21)])
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                
 
             if entries.is_empty() {
                 // draw an empty bordered Dumps block when there are no dumps
@@ -988,7 +986,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let dumps_shown = display_indices.len();
                 let dumps_title = format!("Dumps {}/{}", dumps_total, dumps_shown);
                 let table_block = Block::default().borders(Borders::ALL).title(dumps_title);
-                let table = Table::new(rows)
+
+                // Recreate rows for the table area here so we can use them for rendering
+                let table_rows: Vec<Row> = display_indices
+                    .iter()
+                    .filter_map(|&i| entries.get(i).map(|e| (i, e.clone())))
+                    .map(|(i, (ts, _title, _size_str))| {
+                        let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                        let cell = format!("{}{}", prefix, ts);
+                        Row::new(vec![Cell::from(cell)])
+                    })
+                    .collect();
+
+                let table = Table::new(table_rows)
                     .block(table_block.clone())
                     .widths(&[Constraint::Length(21)])
                     .highlight_style(Style::default().add_modifier(Modifier::REVERSED));

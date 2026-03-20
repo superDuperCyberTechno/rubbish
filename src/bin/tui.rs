@@ -983,6 +983,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     display_state.select(None);
                 }
 
+                // Render table block with a header showing total/visible counts
+                let dumps_total = entries.len();
+                let dumps_shown = display_indices.len();
+                let dumps_title = format!("Dumps {}/{}", dumps_total, dumps_shown);
+                let table_block = Block::default().borders(Borders::ALL).title(dumps_title);
+                let table = Table::new(rows)
+                    .block(table_block.clone())
+                    .widths(&[Constraint::Length(21)])
+                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
                 if focus == Focus::Dumps {
                     f.render_stateful_widget(table, left_chunks[1], &mut display_state);
                 } else {

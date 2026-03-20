@@ -1,53 +1,43 @@
-# rubbish (dump server + TUI)
+# rubbish
+Log-dumper for local software development. Fire up rubbish and throw JSON at `http://127.0.0.1:7771`. Then use rubbish to browse the data at your own leisure.
 
-rubbish is a small Rust utility (single binary) that runs an HTTP dump receiver and an interactive terminal UI together. When developing software, you can then dump data to `rubbish` in JSON format and have rubbish filter and display the data for your viewing pleasure.
+## Features
+- Navigate with arrow keys or Vim-keys.
+- Use space to filter dumps by tags (only usable in the tags-box).
+- Press `c` to clear the tags filter.
+- Pressing `Enter` when focusing a dump will open an appropriate pager (only usable in the dumps-box). `jless` is the default pager, if that isn't available rubbish will use `less`. If none of these are available, nothing will happen.
+- rubbish auto-focuses the newest dump automatically.
 
-Key points:
-- Single executable: the `rubbish` binary runs both the HTTP server and the interactive TUI; exiting the TUI (q/Esc or Ctrl-C) also shuts down the server.
-- Server: binds to `127.0.0.1:7771` and accepts JSON POSTs to `/dump`.
-- TUI: full-screen terminal UI (uses the `tui` + `crossterm` crates). The TUI lists received dumps, shows a raw preview, and supports tag filtering and a pager for viewing full dump files.
+## How?
+Implement a simple helper function in any of your development projects that dumps valid JSON to 127.0.0.1:7771. The built-in webserver in rubbish will receive, validate, format and save the data for perusing.
 
-## Quick start
+### Additional data
+rubbish supports some unique headers to make your life a little easier...
+- `rubbish-title`: Provide a title for your dump. This title will be displayed at the top of the dump preview.
+- `rubbish-tags`: A comma-separated string of tags for your dump. All tags received will be sorted and presented in the Tags-box. Tags can then be toggled for filtering out dumps. Press `c` to clear the tag filter.
 
-1. Build and run the combined app:
+### Examples
 
-   - Debug: `cargo run`
-   - Release: `cargo run --release`
+#### PHP
+```php
+function rub($dump, $title = null, $tags = [])
+{
+    $ch = curl_init('http://127.0.0.1:7771/');
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($dump) . '');
+    curl_setopt($ch, CURLOPT_ENCODING, 'UTF-8');
 
-2. Send a JSON dump to the server (example):
+    $header = [];
+    if ($title) {
+        $header[] = "rubbish-title: {$title}";
+    }
 
-   curl -X POST \
-     -H "Content-Type: application/json" \
-     -H "rubbish-title: My Dump" \
-     -H "rubbish-tags: bug,urgent" \
-     --data @payload.json \
-     http://127.0.0.1:7771/
+    if ($tags) {
+        $tags = implode(',', $tags);
+        $header[] = "rubbish-tags: {$tags}";
+    }
 
-Files and metadata
-
-- Dumps are stored under the dumps directory determined by XDG rules:
-  - If `XDG_DATA_HOME` is set: `$XDG_DATA_HOME/rubbish/dumps`
-  - Otherwise: `$HOME/.local/share/rubbish/dumps` or `./dumps` as a fallback.
-- Each dump is saved as `<ULID>.json` and has an accompanying sidecar metadata file `<ULID>.metadata.json` with the following JSON shape:
-
-  {
-    "title": "(optional title from header)",
-    "tags": ["tag1", "tag2"],
-    "timestamp": 1610000000
-  }
-
-  - `timestamp` is written by the server as Unix timestamp with millisecond precision.
-
-TUI / pager behavior
-
-- The TUI prefers `jless` as the pager, falls back to `less`, otherwise Enter is a no-op.
-- Preview in the TUI shows raw file contents (no wrapping); pressing Enter opens the pager for the selected dump.
-
-Logging / environment
-
-- The application uses `tracing` for logging (goes to stderr by default).
-- There is a `RUBBISH_SERVER_LOG` environment variable used historically to control server child logging; for the in-process server logs go to stderr (we can add file logging via env on request).
-
-Version
-
-- Current package version: 1.0.0
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
+    curl_exec($ch);
+}
+```

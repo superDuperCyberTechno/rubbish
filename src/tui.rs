@@ -430,13 +430,21 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
             let (chunks, left_chunks) = if unique_tags.is_empty() {
-                // slightly narrower Dumps/Tags column when tags are absent
-                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(20), Constraint::Min(0)].as_ref()).split(content_area);
-                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(20)].as_ref()).split(chunks[0]);
+                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             } else {
                 let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
-                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(20)].as_ref()).split(chunks[0]);
+                // Compute tags column width as the remaining space in the left area
+                // after reserving the Dumps column (23). Reduce the tags width by
+                // 5 characters as requested, but don't change the Dumps width.
+                let left_area_w = chunks[0].width as usize;
+                let mut tags_w = if left_area_w > 23 { left_area_w - 23 } else { 0 };
+                // Shrink tags box by 5 characters
+                tags_w = tags_w.saturating_sub(5);
+                // Ensure a sane minimum so layout doesn't collapse
+                let tags_constraint = if tags_w == 0 { Constraint::Min(1) } else { Constraint::Length(tags_w as u16) };
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([tags_constraint, Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             };
 

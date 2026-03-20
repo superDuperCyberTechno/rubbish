@@ -430,13 +430,13 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
             let (chunks, left_chunks) = if unique_tags.is_empty() {
-                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
-                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
+                // slightly narrower Dumps/Tags column when tags are absent
+                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(20), Constraint::Min(0)].as_ref()).split(content_area);
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(20)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             } else {
                 let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
-                // Make the Tags box smaller by reducing the left sub-column width
-                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(12), Constraint::Length(23)].as_ref()).split(chunks[0]);
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(20)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             };
 

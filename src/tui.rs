@@ -487,12 +487,13 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 let prefix = if Some(i) == state.selected() { "  " } else { "" };
                 let mut cell_text = if dumps_col_w == 8 {
                     // show only HH:MM:SS
-                    let hms = extract_hms(ts);
-                    format!("{}{}", prefix, truncate_to_width(&hms, dumps_col_w.saturating_sub(prefix.len())) )
+                    let hms = extract_hms(&ts);
+                    let avail = dumps_col_w.saturating_sub(UnicodeWidthStr::width(prefix));
+                    format!("{}{}", prefix, truncate_to_width(&hms, avail) )
                 } else {
                     // full timestamp (date + time)
-                    let available = dumps_col_w.saturating_sub(prefix.len());
-                    let t = truncate_to_width(ts, available);
+                    let available = dumps_col_w.saturating_sub(UnicodeWidthStr::width(prefix));
+                    let t = truncate_to_width(&ts, available);
                     format!("{}{}", prefix, t)
                 };
                 Row::new(vec![Cell::from(cell_text)])

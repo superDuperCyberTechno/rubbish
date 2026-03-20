@@ -408,8 +408,39 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Setup terminal and interactive UI
-    enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen)?; let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
+    // Setup terminal and interactive UI. If terminal initialization fails
+    // (e.g. not running in a TTY), don't exit the process immediately — log
+    // the error and wait for a termination signal so the server can keep
+    // running. This avoids the TUI thread returning an error and triggering
+    // an immediate shutdown of the HTTP server.
+    let mut terminal = match (|| -> Result<Terminal<CrosstermBackend<std::io::Stdout>>, Box<dyn std::error::Error>> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        let backend = CrosstermBackend::new(stdout);
+        let term = Terminal::new(backend)?;
+        Ok(term)
+    })() {
+        Ok(t) => t,
+        Err(e) => {
+            // Logging is available (main configures tracing before spawning),
+            // but print to stderr as well for immediate visibility.
+            tracing::error!(%e, "failed to initialize TUI - running headless");
+            eprintln!("TUI initialization failed: {}", e);
+
+            // Wait for a termination signal before returning so the server
+            // remains running until the user explicitly stops it.
+            if let Ok(mut signals) = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]) {
+                for _sig in signals.forever() { break; }
+            } else {
+                // If signal setup fails, sleep indefinitely (until process is killed).
+                loop { std::thread::sleep(Duration::from_secs(60)); }
+            }
+
+            // After one of the above unblocks, return Ok to indicate clean exit.
+            return Ok(());
+        }
+    };
 
     let mut state = TableState::default(); if entries.is_empty() { state.select(None); } else { state.select(Some(0)); }
     let mut tags_selected: Option<usize> = None; let mut focus: Focus = Focus::Dumps; let mut match_all: bool = true;

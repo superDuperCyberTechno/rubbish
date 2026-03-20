@@ -429,34 +429,25 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // If there are no tags, reserve a small fixed-width column for the
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
-            let (mut chunks, mut left_chunks) = if unique_tags.is_empty() {
+            let (chunks, left_chunks) = if unique_tags.is_empty() {
                 let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
                 let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             } else {
-                // default percentage split
+                // Start with percentage split, then transfer 10 columns from the
+                // Tags box to the preview box by shrinking chunks[0] and
+                // expanding chunks[1]. Recompute left_chunks after adjustment so
+                // the Dumps box (right side of the left column) remains the
+                // fixed width (23) and the Tags box becomes 10 chars narrower.
                 let mut chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
-                let mut left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
-
-                // Make the Tags-box 5 characters narrower and adjust positions so
-                // the Dumps box remains the same width (left-aligned) and the
-                // preview box grows by 5 characters while keeping its right edge
-                // aligned.
-                let reduce: u16 = 5;
-                // shrink tags area
-                if left_chunks[0].width > reduce {
-                    left_chunks[0].width = left_chunks[0].width.saturating_sub(reduce);
-                } else {
-                    left_chunks[0].width = 0;
+                // move 10 columns from left to right if possible
+                let transfer: u16 = 10;
+                if chunks[0].width > transfer {
+                    chunks[0].width = chunks[0].width.saturating_sub(transfer);
+                    chunks[1].x = chunks[1].x.saturating_sub(transfer);
+                    chunks[1].width = chunks[1].width.saturating_add(transfer);
                 }
-                // move dumps box to directly follow tags area
-                left_chunks[1].x = left_chunks[0].x + left_chunks[0].width;
-                left_chunks[1].width = 23u16;
-
-                // expand preview on the right, keep its right edge fixed
-                chunks[1].x = chunks[1].x.saturating_sub(reduce);
-                chunks[1].width = chunks[1].width.saturating_add(reduce);
-
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             };
 

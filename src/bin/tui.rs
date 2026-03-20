@@ -959,14 +959,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .widths(&[Constraint::Length(21)])
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
+            // Compute counts for header: total entries and shown entries after filtering.
+            let total = entries.len();
+            let shown = display_indices.len();
+
             if entries.is_empty() {
                 // draw an empty bordered Dumps block when there are no dumps
                 let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
                 f.render_widget(empty_block, left_chunks[1]);
+
+                // render counts (0/0)
+                let counts = format!("{}/{}", shown, total);
+                let count_w = UnicodeWidthStr::width(counts.as_str()) as u16;
+                let count_area = Rect {
+                    x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1),
+                    y: left_chunks[1].y,
+                    width: count_w,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(counts), count_area);
             } else if display_indices.is_empty() {
                 // draw an empty bordered Dumps block when the active tag filter matches nothing
                 let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
                 f.render_widget(empty_block, left_chunks[1]);
+
+                // render counts (0/T)
+                let counts = format!("{}/{}", shown, total);
+                let count_w = UnicodeWidthStr::width(counts.as_str()) as u16;
+                let count_area = Rect {
+                    x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1),
+                    y: left_chunks[1].y,
+                    width: count_w,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(counts), count_area);
             } else {
                 // build a temporary TableState that selects the position within the displayed
                 // rows corresponding to the underlying `state` selection (which indexes the
@@ -991,51 +1017,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Render right-aligned counts C/T on the top border of the Dumps block.
                 // C = currently shown (after filter), T = total entries.
-                let total = entries.len();
-                let shown = display_indices.len();
                 let counts = format!("{}/{}", shown, total);
                 let count_w = UnicodeWidthStr::width(counts.as_str()) as u16;
-
-                // Compute a safe x position for the counts so they appear right-aligned
-                // within the Dumps block header. Also ensure there is at least one
-                // horizontal border char between the left title "Dumps" and the counts.
-                let title = "Dumps";
-                let title_w = UnicodeWidthStr::width(title) as u16;
-                let title_start = left_chunks[1].x + 1;
-                let title_end = title_start + title_w;
-
-                // desired right-aligned start for counts (leave 1 cell padding from right border)
-                let rightmost = left_chunks[1].x + left_chunks[1].width.saturating_sub(2);
-                let mut count_x = if rightmost >= count_w { rightmost - count_w + 1 } else { left_chunks[1].x };
-
-                // ensure at least one cell gap between title_end and count_x
-                if count_x <= title_end {
-                    count_x = title_end + 1;
-                }
-
-                // clamp counts to not overflow the block width
-                let max_count_x = left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1);
-                if count_x > max_count_x { count_x = max_count_x; }
-
-                // compute border position between title and counts (one cell left of counts)
-                let border_x = if count_x > 0 { count_x.saturating_sub(1) } else { count_x };
-
-                struct HeaderCountsWidget { text: String, count_x: u16, border_x: u16 }
-                impl Widget for HeaderCountsWidget {
-                    fn render(self, _area: Rect, buf: &mut Buffer) {
-                        // y is provided via the area passed below; write counts and a single
-                        // horizontal character between the title and the counts so the top
-                        // border line is visible there.
-                        let y = _area.y as u16;
-                        buf.set_stringn(self.count_x, y, &self.text, self.text.len(), Style::default());
-                        // draw a single horizontal border char between header and counts
-                        buf.set_stringn(self.border_x, y, "-", 1, Style::default());
-                    }
-                }
-
-                let hc = HeaderCountsWidget { text: counts, count_x, border_x };
-                let count_area = Rect { x: left_chunks[1].x, y: left_chunks[1].y, width: left_chunks[1].width, height: 1 };
-                f.render_widget(hc, count_area);
+                // place counts on the top border row, near the right edge (overwrite border)
+                let count_area = Rect {
+                    x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1),
+                    y: left_chunks[1].y,
+                    width: count_w,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(counts), count_area);
 
                 // draw a marker glyph '>' at the leftmost column of the focused display row
                 if let Some(master_sel) = state.selected() {

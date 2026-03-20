@@ -1,12 +1,13 @@
 # rubbish
-Log-dumper for local software development. Fire up rubbish and throw JSON at `http://127.0.0.1:7771`. Then use rubbish to browse the data at your own leisure.
+Terminal-based dump-viewer for local software development. Fire up rubbish and throw JSON at `http://127.0.0.1:7771`. Then use rubbish to browse the data at your own leisure.
 
 ## Features
+- Interactive TUI.
 - Navigate with arrow keys or Vim-keys.
 - Use space to filter dumps by tags (only usable in the tags-box).
 - Press `c` to clear the tags filter.
-- Pressing `Enter` when focusing a dump will open an appropriate pager (only usable in the dumps-box). `jless` is the default pager, if that isn't available rubbish will use `less`. If none of these are available, nothing will happen.
-- rubbish auto-focuses the newest dump automatically.
+- Pressing `Enter` when focusing a dump will open an appropriate pager (only usable in the dumps-box). `jless` is the default pager, otherwise `less`. If neither are available, nothing will happen.
+- Auto-focuses the newest dump automatically (if it passes the current tag filter).
 
 ## How?
 Implement a simple helper function in any of your development projects that dumps valid JSON to 127.0.0.1:7771. The built-in webserver in rubbish will receive, validate, format and save the data for perusing.

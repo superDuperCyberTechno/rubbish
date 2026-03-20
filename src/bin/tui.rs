@@ -18,7 +18,7 @@ use signal_hook::iterator::Signals;
 use std::sync::mpsc::channel;
 use std::thread;
 use std::collections::{HashMap, HashSet};
-use atty::Stream;
+// atty non-TTY path removed; always run the interactive TUI
 use tui::backend::CrosstermBackend;
 use tui::Terminal;
 use tui::widgets::{Block, Borders, Paragraph, Table, Row, Cell, Widget};
@@ -821,30 +821,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // If stdout is not a TTY, fall back to a simple non-interactive listing + preview
-    if !atty::is(Stream::Stdout) {
-        println!("Dumps (from {}):", dumps_dir.display());
-        if entries.is_empty() {
-            println!("(no dumps found)");
-        } else {
-            for (i, (ts, title, size_str)) in entries.iter().enumerate() {
-                let display_title = if title.len() > 40 { format!("{}...", &title[..37]) } else { title.clone() };
-                if display_title.is_empty() {
-                    // omit the title column when it's empty to avoid extra whitespace
-                    println!("{}: {:<19} {:>8}", i + 1, ts, size_str);
-                } else {
-                    println!("{}: {:<19}  {:<40} {:>8}", i + 1, ts, display_title, size_str);
-                }
-            }
-        }
-        println!("\n--- Preview (first item) ---\n");
-        if preview.is_empty() {
-            println!("(no preview available)");
-        } else {
-            println!("{}", preview);
-        }
-        return Ok(());
-    }
+    // Always run the interactive TUI (previous non-TTY listing/preview mode removed).
 
     // Setup terminal
     enable_raw_mode()?;

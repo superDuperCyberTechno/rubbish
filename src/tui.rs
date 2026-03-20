@@ -423,22 +423,10 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     })() {
         Ok(t) => t,
         Err(e) => {
-            // Logging is available (main configures tracing before spawning),
-            // but print to stderr as well for immediate visibility.
-            tracing::error!(%e, "failed to initialize TUI - running headless");
-            eprintln!("TUI initialization failed: {}", e);
-
-            // Wait for a termination signal before returning so the server
-            // remains running until the user explicitly stops it.
-            if let Ok(mut signals) = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]) {
-                for _sig in signals.forever() { break; }
-            } else {
-                // If signal setup fails, sleep indefinitely (until process is killed).
-                loop { std::thread::sleep(Duration::from_secs(60)); }
-            }
-
-            // After one of the above unblocks, return Ok to indicate clean exit.
-            return Ok(());
+            // If TUI cannot initialize (no TTY), surface the error to the
+            // caller so the main thread can decide whether to keep the
+            // server running. Do not block here.
+            return Err(e);
         }
     };
 

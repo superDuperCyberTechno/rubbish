@@ -11,6 +11,8 @@ Log-dumper for local software development. Fire up rubbish and throw JSON at `ht
 ## How?
 Implement a simple helper function in any of your development projects that dumps valid JSON to 127.0.0.1:7771. The built-in webserver in rubbish will receive, validate, format and save the data for perusing.
 
+All dumps are saved in `~/.local/share/rubbish/dumps`.
+
 ### Additional data
 rubbish supports some unique headers to make your life a little easier...
 - `rubbish-title`: Provide a title for your dump. This title will be displayed at the top of the dump preview.

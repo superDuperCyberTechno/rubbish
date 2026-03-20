@@ -45,8 +45,9 @@ impl<'a> Widget for RawTags<'a> {
             let prefix = if self.selected_tags.contains(tag) { "> " } else { "" };
             let prefix_w = UnicodeWidthStr::width(prefix);
 
-            // reserve at least one column between tag text and the count
-            let avail_for_tag = if max_width > (count_w + 1) as usize { max_width - count_w - 1 } else { 0 };
+            // Reserve one extra column between the tag text and the count so there
+            // is always at least one space: [tag][space][count]
+            let avail_for_tag = if max_width > count_w + 1 { max_width - count_w - 1 } else { 0 };
             let avail_for_tag = avail_for_tag.saturating_sub(prefix_w);
 
             let mut display_tag = String::new();
@@ -76,9 +77,11 @@ impl<'a> Widget for RawTags<'a> {
                 buf.set_stringn(area.x, y, &fill, max_width, style);
             }
 
-            // Render left text (tag name) and count with at least one space between.
             buf.set_stringn(area.x, y, &left_text, max_width, style);
-            let x_count = if area.width as usize > (count_w + 0) { area.x + (area.width as u16).saturating_sub(count_w as u16).saturating_sub(1) } else { area.x + (area.width as u16).saturating_sub(count_w as u16) };
+            // ensure a single space between tag text and count
+            let x_count = area.x + (area.width as u16).saturating_sub(count_w as u16).saturating_sub(1);
+            buf.set_stringn(x_count, y, " ", 1, style);
+            let x_count = x_count + 1;
             buf.set_stringn(x_count, y, &count_str, count_str.len(), style);
             y += 1;
         }

@@ -569,10 +569,147 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        if let Ok(sig) = sig_rx.try_recv() { break; }
+        if sig_rx.try_recv().is_ok() { break; }
     }
 
     disable_raw_mode()?; execute!(terminal.backend_mut(), LeaveAlternateScreen)?; terminal.show_cursor()?;
 
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_human_size_basic() {
+        assert_eq!(human_size(0), "0 B");
+        assert_eq!(human_size(512), "512 B");
+        assert_eq!(human_size(1024), "1.0 KiB");
+        assert_eq!(human_size(1536), "1.5 KiB");
+        assert_eq!(human_size(1024 * 1024), "1.0 MiB");
+        assert_eq!(human_size(1024_u64.pow(3)), "1.0 GiB");
+    }
+
+    #[test]
+    fn test_build_entry_from_path_extracts_title_and_size() {
+        let dir = tempdir().expect("tempdir");
+        let mut path = dir.path().to_path_buf();
+        let fname = format!("2026-03-18_test-title-{}_.json", uuid::Uuid::new_v4());
+        path.push(&fname);
+
+        let data = b"{\"x\":1}\n";
+        {
+            let mut f = fs::File::create(&path).expect("create temp file");
+            f.write_all(data).expect("write data");
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let res = build_entry_from_path(&path).expect("should build entry");
+        let ((ts, title, size_str), _mtime) = res;
+
+        assert!(title.contains("test-title"));
+        assert!(size_str.ends_with("B") || size_str.contains("KiB"));
+        assert!(!ts.is_empty());
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_scan_dumps_ignores_metadata_and_reads_titles() {
+        let dir = tempdir().expect("tempdir");
+        let dumps_dir = dir.path();
+
+        let id = "00000000000000000000000000";
+        let dump_path = dumps_dir.join(format!("{}.json", id));
+        fs::write(&dump_path, b"{\"a\":1}\n").expect("write dump");
+        let meta = serde_json::json!({"title": "Meta Title", "tags": ["t1","t2"]});
+        let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+        fs::write(&meta_path, serde_json::to_string(&meta).unwrap()).expect("write meta");
+
+        let (entries, paths, tags_vec) = scan_dumps(dumps_dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(tags_vec.len(), 1);
+        let (_ts, title, _size) = &entries[0];
+        assert_eq!(title, "Meta Title");
+        assert_eq!(tags_vec[0], vec!["t1".to_string(), "t2".to_string()]);
+    }
+
+    #[test]
+    fn test_filter_indices_basic() {
+        let mut tags_vec: Vec<Vec<String>> = Vec::new();
+        tags_vec.push(vec!["a".to_string(), "b".to_string()]);
+        tags_vec.push(vec!["b".to_string(), "c".to_string()]);
+        tags_vec.push(vec!["a".to_string(), "c".to_string()]);
+
+        let mut sel: HashSet<String> = HashSet::new();
+        let all = filter_indices_mode(&sel, &tags_vec, true);
+        assert_eq!(all, vec![0,1,2]);
+
+        sel.insert("a".to_string());
+        let a_idxs = filter_indices_mode(&sel, &tags_vec, true);
+        assert_eq!(a_idxs, vec![0,2]);
+
+        sel.insert("b".to_string());
+        let ab_idxs = filter_indices_mode(&sel, &tags_vec, true);
+        assert_eq!(ab_idxs, vec![0]);
+
+        sel.insert("z".to_string());
+        let none = filter_indices_mode(&sel, &tags_vec, true);
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn test_filter_indices_mode_union() {
+        let mut tags_vec: Vec<Vec<String>> = Vec::new();
+        tags_vec.push(vec!["a".to_string(), "b".to_string()]);
+        tags_vec.push(vec!["b".to_string(), "c".to_string()]);
+        tags_vec.push(vec!["d".to_string()]);
+
+        let mut sel: HashSet<String> = HashSet::new();
+        sel.insert("b".to_string());
+        let union = filter_indices_mode(&sel, &tags_vec, false);
+        assert_eq!(union, vec![0,1]);
+
+        sel.insert("d".to_string());
+        let union2 = filter_indices_mode(&sel, &tags_vec, false);
+        assert_eq!(union2, vec![0,1,2]);
+    }
+
+    #[test]
+    fn test_read_metadata_timestamp_seconds_and_millis() {
+        let dir = tempdir().expect("tempdir");
+        let dumps_dir = dir.path();
+
+        let id = "ts_test_id";
+        let dump_path = dumps_dir.join(format!("{}.json", id));
+        fs::write(&dump_path, b"{}\n").expect("write dump");
+
+        let ts_secs: i64 = 1_700_000_000;
+        let meta_secs = serde_json::json!({"title": "S", "tags": ["t"], "timestamp": ts_secs});
+        let meta_path = dumps_dir.join(format!("{}.metadata.json", id));
+        fs::write(&meta_path, serde_json::to_string(&meta_secs).unwrap()).expect("write meta secs");
+
+        let (_title, _tags, parsed_secs) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_secs, Some(ts_secs));
+
+        let ts_millis: i64 = ts_secs * 1000;
+        let meta_millis = serde_json::json!({"title": "M", "tags": ["t"], "timestamp": ts_millis});
+        fs::write(&meta_path, serde_json::to_string(&meta_millis).unwrap()).expect("write meta millis");
+
+        let (_title2, _tags2, parsed_millis) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_millis, Some(ts_secs));
+
+        let meta_millis_str = serde_json::json!({"title":"MS","tags":["t"],"timestamp": ts_millis.to_string()});
+        fs::write(&meta_path, serde_json::to_string(&meta_millis_str).unwrap()).expect("write meta millis str");
+
+        let (_title3, _tags3, parsed_millis_str) = read_metadata_for_path(&dump_path, &dumps_dir);
+        assert_eq!(parsed_millis_str, Some(ts_secs));
+    }
 }

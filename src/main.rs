@@ -17,13 +17,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     // Start the TUI in a background thread so we can run the Axum server in this Tokio runtime.
-    // The TUI itself spawns a server child when run in the previous binary layout; to embed
-    // the TUI in a single `rubbish` binary we run the TUI's interactive loop in a blocking
-    // thread while also running the HTTP server on the same process.
+    // Use a oneshot channel so the TUI can signal the server to shut down when it exits.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tui_handle = std::thread::spawn(move || {
         if let Err(e) = crate::tui::run_tui() {
             eprintln!("TUI error: {}", e);
         }
+        // notify main to shut down the server when the TUI exits (ignore send errors)
+        let _ = shutdown_tx.send(());
     });
 
     // Run HTTP server using Axum; bind to localhost:7771 as before.
@@ -34,9 +35,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(addr).await.expect("failed to bind");
     let server = axum::serve(listener, app);
 
-    tokio::select! {
-        res = server => if let Err(e) = res { error!(%e, "server error"); },
-        _ = signal::ctrl_c() => info!("shutting down"),
+    // Shutdown either on Ctrl-C or when the TUI signals via the oneshot channel.
+    let graceful = server.with_graceful_shutdown(async {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("shutting down");
+            }
+            _ = shutdown_rx => {
+                info!("tui exited; shutting down server");
+            }
+        }
+    });
+
+    if let Err(e) = graceful.await {
+        error!(%e, "server error");
     }
 
     // Wait for the TUI thread to finish before exiting

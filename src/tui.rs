@@ -463,7 +463,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 None => String::new(),
             };
             let preview_widget = RawPreview { text: &preview };
-            let block = Block::default().borders(Borders::ALL).title(preview_title);
+            let block = Block::default().borders(Borders::ALL).title(preview_title.clone());
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
@@ -496,7 +496,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 preview_rect.width = preview_rect.width.saturating_add(5);
                 // Use preview_rect for subsequent preview rendering
                 let preview_widget = RawPreview { text: &preview };
-                let block = Block::default().borders(Borders::ALL).title(preview_title);
+                let block = Block::default().borders(Borders::ALL).title(preview_title.clone());
                 let inner = block.inner(preview_rect);
                 f.render_widget(block, preview_rect);
                 f.render_widget(preview_widget, inner);

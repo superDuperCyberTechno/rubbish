@@ -471,7 +471,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 let prefix = if Some(i) == state.selected() { if compact { " " } else { "  " } } else { "" };
                 // truncate to the dumps_col_w to avoid overflow
-                let mut cell = format!("{}{}", prefix, display_ts);
+                let cell = format!("{}{}", prefix, display_ts);
                 let mut acc = String::new(); let mut cur_w = 0usize;
                 for ch in cell.chars() {
                     let cw = UnicodeWidthStr::width(ch.to_string().as_str());

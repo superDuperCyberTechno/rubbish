@@ -456,9 +456,49 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 (chunks, left_chunks)
             };
 
-            let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
+            // Determine dumps column width. If the available area cannot contain
+            // 21 characters, shrink to 8 and display only the time (HH:MM:SS).
+            let dumps_area_width = left_chunks[1].width as usize;
+            let dumps_col_w = if dumps_area_width >= 21 { 21usize } else { 8usize };
 
-            let table_block = Block::default().borders(Borders::ALL).title("Dumps"); let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            // helper: truncate a string to fit a given display width
+            fn truncate_to_width(s: &str, max_w: usize) -> String {
+                if UnicodeWidthStr::width(s) <= max_w { return s.to_string(); }
+                let mut acc = String::new(); let mut cur = 0usize;
+                for ch in s.chars() {
+                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                    if cur + cw > max_w { break; }
+                    acc.push(ch); cur += cw;
+                }
+                acc
+            }
+
+            // helper: extract HH:MM:SS from a timestamp string
+            fn extract_hms(ts: &str) -> String {
+                if let Some(idx) = ts.rfind(' ') {
+                    let part = &ts[idx+1..];
+                    if part.len() >= 8 { return part.chars().rev().collect::<String>().chars().rev().collect(); }
+                }
+                if ts.len() >= 8 { return ts.chars().rev().take(8).collect::<String>().chars().rev().collect(); }
+                ts.to_string()
+            }
+
+            let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| {
+                let prefix = if Some(i) == state.selected() { "  " } else { "" };
+                let mut cell_text = if dumps_col_w == 8 {
+                    // show only HH:MM:SS
+                    let hms = extract_hms(ts);
+                    format!("{}{}", prefix, truncate_to_width(&hms, dumps_col_w.saturating_sub(prefix.len())) )
+                } else {
+                    // full timestamp (date + time)
+                    let available = dumps_col_w.saturating_sub(prefix.len());
+                    let t = truncate_to_width(ts, available);
+                    format!("{}{}", prefix, t)
+                };
+                Row::new(vec![Cell::from(cell_text)])
+            }).collect();
+
+            let table_block = Block::default().borders(Borders::ALL).title("Dumps"); let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(dumps_col_w as u16)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
             if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }

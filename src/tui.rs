@@ -196,7 +196,7 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
     for (path, effective, meta, title, tags, meta_ts) in files.into_iter() {
         // meta_ts is milliseconds. Use timestamp_millis for display when available.
         let ts_string = if let Some(sts) = meta_ts {
-            if let Some(dt) = Local.timestamp_millis_opt(sts, 0).single() {
+            if let Some(dt) = Local.timestamp_millis_opt(sts).single() {
                 dt.format("%Y-%m-%d %H:%M:%S").to_string()
             } else {
                 DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
@@ -777,19 +777,19 @@ mod tests {
         fs::write(&meta_path, serde_json::to_string(&meta_secs).unwrap()).expect("write meta secs");
 
         let (_title, _tags, parsed_secs) = read_metadata_for_path(&dump_path, &dumps_dir);
-        assert_eq!(parsed_secs, Some(ts_secs));
+        assert_eq!(parsed_secs, Some(ts_secs * 1000));
 
         let ts_millis: i64 = ts_secs * 1000;
         let meta_millis = serde_json::json!({"title": "M", "tags": ["t"], "timestamp": ts_millis});
         fs::write(&meta_path, serde_json::to_string(&meta_millis).unwrap()).expect("write meta millis");
 
         let (_title2, _tags2, parsed_millis) = read_metadata_for_path(&dump_path, &dumps_dir);
-        assert_eq!(parsed_millis, Some(ts_secs));
+        assert_eq!(parsed_millis, Some(ts_millis));
 
         let meta_millis_str = serde_json::json!({"title":"MS","tags":["t"],"timestamp": ts_millis.to_string()});
         fs::write(&meta_path, serde_json::to_string(&meta_millis_str).unwrap()).expect("write meta millis str");
 
         let (_title3, _tags3, parsed_millis_str) = read_metadata_for_path(&dump_path, &dumps_dir);
-        assert_eq!(parsed_millis_str, Some(ts_secs));
+        assert_eq!(parsed_millis_str, Some(ts_millis));
     }
 }

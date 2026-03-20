@@ -456,52 +456,36 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 (chunks, left_chunks)
             };
 
-            // Determine dumps column width. If the available area cannot contain
-            // 21 characters, shrink to 8 and display only the time (HH:MM:SS).
-            let dumps_area_width = left_chunks[1].width as usize;
-            let dumps_col_w = if dumps_area_width >= 21 { 21usize } else { 8usize };
-
-            // helper: truncate a string to fit a given display width
-            fn truncate_to_width(s: &str, max_w: usize) -> String {
-                if UnicodeWidthStr::width(s) <= max_w { return s.to_string(); }
-                let mut acc = String::new(); let mut cur = 0usize;
-                for ch in s.chars() {
-                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                    if cur + cw > max_w { break; }
-                    acc.push(ch); cur += cw;
-                }
-                acc
-            }
-
-            // helper: extract HH:MM:SS from a timestamp string
-            fn extract_hms(ts: &str) -> String {
-                if let Some(idx) = ts.rfind(' ') {
-                    let part = &ts[idx+1..];
-                    if part.len() >= 8 { return part.chars().rev().collect::<String>().chars().rev().collect(); }
-                }
-                if ts.len() >= 8 { return ts.chars().rev().take(8).collect::<String>().chars().rev().collect(); }
-                ts.to_string()
-            }
+            // Determine the dumps column target width. If the available width
+            // can't contain 21 characters, fall back to 10 characters (or the
+            // available width if even smaller). When using the narrow width we
+            // display only the HH:MM:SS time portion of the timestamp.
+            let dumps_avail_w = left_chunks[1].width as usize;
+            let target_col_w = if dumps_avail_w >= 21 { 21 } else if dumps_avail_w >= 10 { 10 } else { dumps_avail_w };
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| {
                 let prefix = if Some(i) == state.selected() { "  " } else { "" };
-                let mut cell_text = if dumps_col_w == 8 {
-                    // show only HH:MM:SS
-                    let hms = extract_hms(&ts);
-                    let avail = dumps_col_w.saturating_sub(UnicodeWidthStr::width(prefix));
-                    format!("{}{}", prefix, truncate_to_width(&hms, avail) )
+                // If we're in narrow mode (10 cols) show only HH:MM:SS
+                let ts_display = if target_col_w == 10 {
+                    // take last whitespace-separated token (usually HH:MM:SS)
+                    ts.split_whitespace().last().map(|s| s.to_string()).unwrap_or_else(|| ts.clone())
                 } else {
-                    // full timestamp (date + time)
-                    let available = dumps_col_w.saturating_sub(UnicodeWidthStr::width(prefix));
-                    let t = truncate_to_width(&ts, available);
-                    format!("{}{}", prefix, t)
+                    ts.clone()
                 };
-                Row::new(vec![Cell::from(cell_text)])
+                // Trim to fit into target_col_w minus prefix width
+                let avail = target_col_w.saturating_sub(UnicodeWidthStr::width(prefix) as usize);
+                let mut acc = String::new(); let mut cur_w = 0usize;
+                for ch in ts_display.chars() {
+                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                    if cur_w + cw > avail { break; }
+                    acc.push(ch); cur_w += cw;
+                }
+                let cell = format!("{}{}", prefix, acc);
+                Row::new(vec![Cell::from(cell)])
             }).collect();
 
             let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-            let width_constraints = vec![Constraint::Length(dumps_col_w as u16)];
-            let table = Table::new(rows).block(table_block.clone()).widths(&width_constraints).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(target_col_w as u16)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
             if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }

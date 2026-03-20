@@ -434,7 +434,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // If there are no tags, reserve a small fixed-width column for the
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
-            let (chunks, left_chunks) = if unique_tags.is_empty() {
+            let (mut chunks, mut left_chunks) = if unique_tags.is_empty() {
                 let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
                 let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
@@ -456,35 +456,26 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 (chunks, left_chunks)
             };
 
-            // If the Dumps-box cannot contain 21 characters, switch to a compact
-            // mode: use a 10-char timestamp (HH:MM:SS) and a narrower column.
-            let dumps_box_w = left_chunks[1].width as usize;
-            let compact = dumps_box_w < 21;
-            let dumps_col_w = if compact { 10usize } else { 21usize };
-
-            let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| {
-                let display_ts = if compact {
-                    // extract time portion HH:MM:SS
-                    ts.split_whitespace().last().map(|s| s.to_string()).unwrap_or(ts.clone())
-                } else {
-                    ts.clone()
-                };
-                let prefix = if Some(i) == state.selected() { if compact { " " } else { "  " } } else { "" };
-                // truncate to the dumps_col_w to avoid overflow
-                let cell = format!("{}{}", prefix, display_ts);
-                let mut acc = String::new(); let mut cur_w = 0usize;
-                for ch in cell.chars() {
-                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                    if cur_w + cw > dumps_col_w { break; }
-                    acc.push(ch);
-                    cur_w += cw;
+            // Ensure the Dumps-box (left_chunks[1]) never becomes narrower than
+            // its fixed width (23). If the terminal is resized smaller, prefer
+            // shrinking the preview (chunks[1]) or the Tags box rather than the
+            // Dumps box. If there's insufficient space to steal, leave sizes as-is.
+            const DUMPS_FIXED_W: u16 = 23;
+            if left_chunks[1].width < DUMPS_FIXED_W {
+                let need = DUMPS_FIXED_W.saturating_sub(left_chunks[1].width);
+                if chunks[1].width > need {
+                    // transfer `need` columns from the preview area to the left column
+                    chunks[0].width = chunks[0].width.saturating_add(need);
+                    chunks[1].x = chunks[1].x.saturating_sub(need);
+                    chunks[1].width = chunks[1].width.saturating_sub(need);
+                    // recompute left_chunks to reflect the new left column width
+                    left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 }
-                Row::new(vec![Cell::from(acc)])
-            }).collect();
+            }
 
-            let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-            let col_constraints = vec![Constraint::Length(dumps_col_w as u16)];
-            let table = Table::new(rows).block(table_block.clone()).widths(&col_constraints).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
+
+            let table_block = Block::default().borders(Borders::ALL).title("Dumps"); let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
             if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }

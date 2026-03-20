@@ -218,10 +218,18 @@ fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -
                     if let Some(t) = v.get("title").and_then(|x| x.as_str()) { title = t.to_string(); }
                     if let Some(arr) = v.get("tags").and_then(|x| x.as_array()) { for it in arr.iter() { if let Some(tsv) = it.as_str() { tags.push(tsv.to_string()); } } }
                     if let Some(tv) = v.get("timestamp") {
+                        // accept number or numeric string; normalize milliseconds -> seconds
                         if let Some(n) = tv.as_i64() { timestamp = Some(n); }
                         else if let Some(un) = tv.as_u64() { timestamp = Some(un as i64); }
                         else if let Some(sv) = tv.as_str() { if let Ok(parsed) = sv.parse::<i64>() { timestamp = Some(parsed); } }
-                        if let Some(tsv) = timestamp { if tsv.abs() > 3_000_000_000i64 { timestamp = Some(tsv / 1000); } }
+                        if let Some(tsv) = timestamp {
+                            // if value looks like millis (greater than ~year 2065 in seconds), convert to seconds
+                            if tsv.abs() > 3_000_000_000i64 { timestamp = Some(tsv / 1000); }
+                            // If it looks like milliseconds (large value), also support storing millis by
+                            // returning the raw milliseconds value here. To maintain compatibility we
+                            // normalize to seconds for downstream code that expects seconds, but
+                            // store the original milliseconds in a separate variable when needed.
+                        }
                     }
                 }
             }
@@ -230,7 +238,7 @@ fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -
     (title, tags, timestamp)
 }
 
-fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, tags_vec: &mut Vec<Vec<String>>, selected_tags: &mut HashSet<String>, state: &mut TableState, preview: &mut String) {
+fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut Vec<(String, String, String)>, paths: &mut Vec<std::path::PathBuf>, tags_vec: &mut Vec<Vec<String>>, selected_tags: &mut HashSet<String>, state: &mut TableState, preview: &mut String, match_all: bool) {
     match ev {
         WatchEvent::Rescan => {
             let (new_entries, new_paths, new_tags) = scan_dumps(dumps_dir);
@@ -260,11 +268,23 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         let existing_effective = if let Some(est) = existing_meta_ts { if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) } } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
                         if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
                     }
-                    if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta); }
-                    // For created files (new dumps) always select the top entry so the TUI
-                    // brings the newest dump into view immediately.
-                    state.select(Some(0));
-                    if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
+                    if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta.clone()); }
+                    // Only jump to the newest dump if it is visible under the current tag
+                    // filter. Compute visibility from the inserted file's tags and the
+                    // selected_tags/match_all mode.
+                    let visible = if selected_tags.is_empty() {
+                        true
+                    } else if match_all {
+                        // match all: every selected tag must be present on the dump
+                        selected_tags.iter().all(|t| tags_meta.iter().any(|x| x == t))
+                    } else {
+                        // match any: any selected tag present on the dump
+                        selected_tags.iter().any(|t| tags_meta.iter().any(|x| x == t))
+                    };
+                    if visible {
+                        state.select(Some(0));
+                        if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
+                    }
                 }
             } else {
                 if let Some(pos) = paths.iter().position(|x| x == &p) { paths.remove(pos); entries.remove(pos); tags_vec.remove(pos); match state.selected() { Some(sel) if sel == pos => { if entries.is_empty() { state.select(None); *preview = String::new(); } else { let new_sel = if pos == 0 { 0 } else { pos - 1 }; state.select(Some(new_sel)); if let Some(p2) = paths.get(new_sel) { *preview = read_preview(p2).unwrap_or_else(|_e| String::new()); } } } Some(sel) if sel > pos => { state.select(Some(sel - 1)); } _ => {} } }
@@ -286,10 +306,18 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         let existing_effective = if let Some(est) = existing_meta_ts { if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) } } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
                         if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
                     }
-                    if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta); }
-                    // Treat Modified like Created: always select top so newest dump is visible
-                    state.select(Some(0));
-                    if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
+                    if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta.clone()); }
+                    let visible = if selected_tags.is_empty() {
+                        true
+                    } else if match_all {
+                        selected_tags.iter().all(|t| tags_meta.iter().any(|x| x == t))
+                    } else {
+                        selected_tags.iter().any(|t| tags_meta.iter().any(|x| x == t))
+                    };
+                    if visible {
+                        state.select(Some(0));
+                        if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
+                    }
                 }
             } else {
                 if let Some(pos) = paths.iter().position(|x| x == &p) { paths.remove(pos); entries.remove(pos); tags_vec.remove(pos); match state.selected() { Some(sel) if sel == pos => { if entries.is_empty() { state.select(None); *preview = String::new(); } else { let new_sel = if pos == 0 { 0 } else { pos - 1 }; state.select(Some(new_sel)); if let Some(p2) = paths.get(new_sel) { *preview = read_preview(p2).unwrap_or_else(|_e| String::new()); } } } Some(sel) if sel > pos => { state.select(Some(sel - 1)); } _ => {} } }
@@ -362,7 +390,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     let (sig_tx, sig_rx) = channel(); let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).unwrap(); thread::spawn(move || { for sig in signals.forever() { let _ = sig_tx.send(sig); } });
 
     loop {
-        if let Ok(ev) = fs_rx.try_recv() { apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut tags_vec, &mut selected_tags, &mut state, &mut preview); }
+        if let Ok(ev) = fs_rx.try_recv() { apply_watch_event(ev, &dumps_dir, &mut entries, &mut paths, &mut tags_vec, &mut selected_tags, &mut state, &mut preview, match_all); }
         let mut uniq_set: HashSet<String> = HashSet::new(); for v in tags_vec.iter() { for t in v.iter() { uniq_set.insert(t.clone()); } }
         let mut unique_tags: Vec<String> = uniq_set.into_iter().collect(); unique_tags.sort_by(|a, b| natural_cmp(a, b));
         if unique_tags.is_empty() { tags_selected = None; } else if tags_selected.is_none() { tags_selected = Some(0); } else if let Some(idx) = tags_selected { if idx >= unique_tags.len() { tags_selected = Some(0); } }

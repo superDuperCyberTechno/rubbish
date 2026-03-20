@@ -115,8 +115,8 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
             let meta = serde_json::json!({
                 "title": title_str,
                 "tags": tags_vec,
-                // unix timestamp in seconds added by the server
-                "timestamp": Utc::now().timestamp(),
+                // unix timestamp in milliseconds added by the server
+                "timestamp": Utc::now().timestamp_millis(),
             });
             let meta_path = path.with_extension("metadata.json");
             if let Err(e) = write_text_atomic(&meta_path, &serde_json::to_string_pretty(&meta).unwrap_or_else(|_| "{}".to_string())) {

@@ -1379,7 +1379,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         })
                                         .collect();
 
-                                    let table_block = Block::default().borders(Borders::ALL).title("Dumps");
+                                    // compute header counts C/T for the Dumps box (right-aligned)
+                                    let dumps_total = entries.len();
+                                    let dumps_shown = display_indices.len();
+                                    let counts_str = format!("{}/{}", dumps_shown, dumps_total);
+                                    let base_title = "Dumps";
+                                    let box_w = left_chunks[1].width as usize;
+                                    let base_w = UnicodeWidthStr::width(base_title);
+                                    let counts_w = UnicodeWidthStr::width(counts_str.as_str());
+                                    let pad_count = if box_w > base_w + counts_w { box_w - base_w - counts_w } else { 1 };
+                                    let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
+                                    let dumps_title = format!("{}{}{}", base_title, pad, counts_str);
+
+                                    let table_block = Block::default().borders(Borders::ALL).title(dumps_title);
                                     let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]);
                                     f.render_stateful_widget(table, left_chunks[1], &mut state);
 

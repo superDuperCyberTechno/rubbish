@@ -1,14 +1,60 @@
-# rubbish (dump server)
+# rubbish (dump server + TUI)
 
-This is a small Rust-based dump server that listens on localhost:7771 and accepts JSON dumps POSTed to `/dump`.
+rubbish is a small Rust utility (single binary) that runs an HTTP dump receiver and an interactive terminal UI together.
 
-Usage:
+Key points:
+- Single executable: the `rubbish` binary runs both the HTTP server and the interactive TUI; exiting the TUI (q/Esc or Ctrl-C) gracefully shuts down the server.
+- Server: binds to `127.0.0.1:7771` and accepts JSON POSTs to `/dump`.
+- TUI: full-screen terminal UI (uses the `tui` + `crossterm` crates). The TUI lists received dumps, shows a raw preview, and supports tag filtering and a pager for viewing full dump files.
 
-1. Install Rust toolchain (stable) and run `cargo run --release`.
-2. Send JSON to the server: `curl -X POST -H "Content-Type: application/json" -H "rubbish-title: My Dump" --data @payload.json http://127.0.0.1:7771/dump`.
-3. Received dumps are saved to the `dumps/` directory with a timestamped filename. If the `rubbish-title` header is provided it is included in the filename.
+Quick start
 
-Notes / next steps:
+1. Build and run the combined app:
 
-- Add a TUI to browse saved dumps and open them with `jless` (planned).
-- Ensure file rotation / storage limits as needed.
+   - Debug: `cargo run`
+   - Release: `cargo run --release`
+
+2. Send a JSON dump to the server (example):
+
+   curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "rubbish-title: My Dump" \
+     -H "rubbish-tags: bug,urgent" \
+     --data @payload.json \
+     http://127.0.0.1:7771/dump
+
+Files and metadata
+
+- Dumps are stored under the dumps directory determined by XDG rules:
+  - If `XDG_DATA_HOME` is set: `$XDG_DATA_HOME/rubbish/dumps`
+  - Otherwise: `$HOME/.local/share/rubbish/dumps` or `./dumps` as a fallback.
+- Each dump is saved as `<ULID>.json` and has an accompanying sidecar metadata file `<ULID>.metadata.json` with the following JSON shape:
+
+  {
+    "title": "(optional title from header)",
+    "tags": ["tag1", "tag2"],
+    "timestamp": 1610000000
+  }
+
+  - `timestamp` is written by the server as Unix seconds.
+
+TUI / pager behavior
+
+- The TUI prefers `jless` as the pager, falls back to `less`, otherwise Enter is a no-op.
+- Preview in the TUI shows raw file contents (no wrapping); pressing Enter opens the pager for the selected dump.
+
+Logging / environment
+
+- The application uses `tracing` for logging (goes to stderr by default).
+- There is a `RUBBISH_SERVER_LOG` environment variable used historically to control server child logging; for the in-process server logs go to stderr (we can add file logging via env on request).
+
+Development
+
+- Run unit tests: `cargo test`
+- Build release binary: `cargo build --release` (artifact: `target/release/rubbish`)
+
+Version
+
+- Current package version: 1.0.0
+
+If you want README tweaks (examples, screenshots, or packaging notes), tell me what to add.

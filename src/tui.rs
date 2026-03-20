@@ -175,7 +175,16 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
             if let Ok(meta) = e.metadata() {
                 let file_mtime = meta.modified().ok().unwrap_or(SystemTime::UNIX_EPOCH);
                 let (title, tags, meta_ts) = read_metadata_for_path(&path, &dumps_dir);
-                let effective = if let Some(sts) = meta_ts { if sts >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(sts as u64) } else { SystemTime::UNIX_EPOCH } } else { file_mtime };
+                // meta_ts is now in milliseconds when present. Build effective using millis precision.
+                let effective = if let Some(sts) = meta_ts {
+                    if sts >= 0 {
+                        SystemTime::UNIX_EPOCH + Duration::from_millis(sts as u64)
+                    } else {
+                        SystemTime::UNIX_EPOCH
+                    }
+                } else {
+                    file_mtime
+                };
                 files.push((path, effective, meta, title, tags, meta_ts));
             }
         }
@@ -185,7 +194,16 @@ fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Ve
     let mut paths: Vec<std::path::PathBuf> = Vec::new();
     let mut tags_vec: Vec<Vec<String>> = Vec::new();
     for (path, effective, meta, title, tags, meta_ts) in files.into_iter() {
-        let ts_string = if let Some(sts) = meta_ts { if let Some(dt) = Local.timestamp_opt(sts, 0).single() { dt.format("%Y-%m-%d %H:%M:%S").to_string() } else { DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string() } } else { DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string() };
+        // meta_ts is milliseconds. Use timestamp_millis for display when available.
+        let ts_string = if let Some(sts) = meta_ts {
+            if let Some(dt) = Local.timestamp_millis_opt(sts, 0).single() {
+                dt.format("%Y-%m-%d %H:%M:%S").to_string()
+            } else {
+                DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
+            }
+        } else {
+            DateTime::<Local>::from(effective).format("%Y-%m-%d %H:%M:%S").to_string()
+        };
         let size_str = human_size(meta.len()); entries.push((ts_string, title, size_str)); paths.push(path.clone()); tags_vec.push(tags);
     }
     (entries, paths, tags_vec)
@@ -218,17 +236,19 @@ fn read_metadata_for_path(path: &std::path::Path, dumps_dir: &std::path::Path) -
                     if let Some(t) = v.get("title").and_then(|x| x.as_str()) { title = t.to_string(); }
                     if let Some(arr) = v.get("tags").and_then(|x| x.as_array()) { for it in arr.iter() { if let Some(tsv) = it.as_str() { tags.push(tsv.to_string()); } } }
                     if let Some(tv) = v.get("timestamp") {
-                        // accept number or numeric string; normalize milliseconds -> seconds
+                        // accept number or numeric string; normalize to milliseconds
                         if let Some(n) = tv.as_i64() { timestamp = Some(n); }
                         else if let Some(un) = tv.as_u64() { timestamp = Some(un as i64); }
                         else if let Some(sv) = tv.as_str() { if let Ok(parsed) = sv.parse::<i64>() { timestamp = Some(parsed); } }
                         if let Some(tsv) = timestamp {
-                            // if value looks like millis (greater than ~year 2065 in seconds), convert to seconds
-                            if tsv.abs() > 3_000_000_000i64 { timestamp = Some(tsv / 1000); }
-                            // If it looks like milliseconds (large value), also support storing millis by
-                            // returning the raw milliseconds value here. To maintain compatibility we
-                            // normalize to seconds for downstream code that expects seconds, but
-                            // store the original milliseconds in a separate variable when needed.
+                            // If value looks like milliseconds (large value) keep as-is.
+                            // If it looks like seconds (small value) convert to milliseconds.
+                            if tsv.abs() <= 3_000_000_000i64 {
+                                // treat as seconds -> convert to milliseconds
+                                timestamp = Some(tsv * 1000);
+                            } else {
+                                // already milliseconds; leave as-is
+                            }
                         }
                     }
                 }
@@ -265,7 +285,9 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
                         let existing_meta_ts = read_metadata_for_path(existing, dumps_dir).2;
-                        let existing_effective = if let Some(est) = existing_meta_ts { if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) } } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
+                        let existing_effective = if let Some(est) = existing_meta_ts {
+                            if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_millis(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) }
+                        } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
                         if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
                     }
                     if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta.clone()); }
@@ -303,7 +325,9 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                     let mut inserted = false;
                     for (i, existing) in paths.iter().enumerate() {
                         let existing_meta_ts = read_metadata_for_path(existing, dumps_dir).2;
-                        let existing_effective = if let Some(est) = existing_meta_ts { if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) } } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
+                        let existing_effective = if let Some(est) = existing_meta_ts {
+                            if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_millis(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) }
+                        } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
                         if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
                     }
                     if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta.clone()); }

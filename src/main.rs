@@ -8,20 +8,24 @@ use std::env;
 use tokio::signal;
 use tracing::{error, info};
 
-// Embed the TUI module (kept in `src/tui_app.rs`) and expose its runner
-mod tui_app;
-pub use tui_app::run_tui as run_tui;
+// Embed the TUI module (kept in `src/tui.rs`) and expose its runner
+mod tui;
+pub use tui::run_tui as run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
+    // Silence tracing logs (send to sink) so the TUI's stderr/stdout remain clean.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::sink)
+        .init();
 
     // Start the TUI in a background thread so we can run the Axum server in this Tokio runtime.
     // Use a oneshot channel so the TUI can signal the server to shut down when it exits.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tui_handle = std::thread::spawn(move || {
-        if let Err(e) = crate::tui_app::run_tui() {
-            eprintln!("TUI error: {}", e);
+        if let Err(e) = crate::tui::run_tui() {
+            // route TUI errors through tracing so they are discarded by the sink above
+            tracing::error!("TUI error: {}", e);
         }
         // notify main to shut down the server when the TUI exits (ignore send errors)
         let _ = shutdown_tx.send(());

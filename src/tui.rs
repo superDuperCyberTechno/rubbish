@@ -457,8 +457,19 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
 
-            if unique_tags.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Tags"); f.render_widget(empty_block, left_chunks[0]); }
-            else { let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len()); for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); } let tags_block = Block::default().borders(Borders::ALL).title("Tags"); let tags_block_clone = tags_block.clone(); f.render_widget(tags_block_clone, left_chunks[0]); let inner = tags_block.inner(left_chunks[0]); let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected }; f.render_widget(raw, inner); }
+            // Only render the Tags box when there are tags to show. If there are no
+            // tags, don't render anything in the left tag column so the UI is not
+            // cluttered with an empty box.
+            if !unique_tags.is_empty() {
+                let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len());
+                for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); }
+                let tags_block = Block::default().borders(Borders::ALL).title("Tags");
+                let tags_block_clone = tags_block.clone();
+                f.render_widget(tags_block_clone, left_chunks[0]);
+                let inner = tags_block.inner(left_chunks[0]);
+                let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected };
+                f.render_widget(raw, inner);
+            }
 
             // Render the selected dump's size in the bottom-right of the preview box
             let sel_size = match state.selected().and_then(|i| entries.get(i)) {

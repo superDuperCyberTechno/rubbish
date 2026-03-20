@@ -8,9 +8,9 @@ use std::env;
 use tokio::signal;
 use tracing::{error, info};
 
-// Embed the TUI module (kept in `src/tui.rs`) and expose its runner
-mod tui;
-pub use tui::run_tui as run_tui;
+// Embed the TUI module (kept in `src/tui_app.rs`) and expose its runner
+mod tui_app;
+pub use tui_app::run_tui as run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use a oneshot channel so the TUI can signal the server to shut down when it exits.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tui_handle = std::thread::spawn(move || {
-        if let Err(e) = crate::tui::run_tui() {
+        if let Err(e) = crate::tui_app::run_tui() {
             eprintln!("TUI error: {}", e);
         }
         // notify main to shut down the server when the TUI exits (ignore send errors)

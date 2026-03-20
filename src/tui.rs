@@ -369,20 +369,205 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             else { let max_title_w = width.saturating_sub(size_w + 1); let title_w = UnicodeWidthStr::width(sel_title.as_str()); let title_display = if title_w <= max_title_w { sel_title.clone() } else if max_title_w >= 4 { let mut acc = String::new(); let mut cur_w = 0usize; for ch in sel_title.chars() { let cw = UnicodeWidthStr::width(ch.to_string().as_str()); if cur_w + cw + 3 > max_title_w { break; } acc.push(ch); cur_w += cw; } acc.push_str("..."); acc } else { String::new() }; let right_side = sel_size.clone(); let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + UnicodeWidthStr::width(right_side.as_str())); let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>(); let final_line = format!("{}{}{}", title_display, pad, right_side); f.render_widget(Paragraph::new(final_line), vchunks[1]); }
         })?;
 
-        if event::poll(Duration::from_millis(200))? { if let CEvent::Key(key) = event::read()? { match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => break,
-            KeyCode::Left | KeyCode::Char('h') => { focus = Focus::Tags; if let Some(dsel) = state.selected() { if let Some(first_tag) = tags_vec.get(dsel).and_then(|v| v.get(0)) { tags_selected = unique_tags.iter().position(|t| t == first_tag); if tags_selected.is_none() && !unique_tags.is_empty() { tags_selected = Some(0); } } else { tags_selected = None; } } else { tags_selected = None; } }
-            KeyCode::Right | KeyCode::Char('l') => { focus = Focus::Dumps; }
-            KeyCode::Up | KeyCode::Char('k') => { match focus { Focus::Dumps => { if entries.is_empty() {} else { if display_indices.is_empty() {} else { let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms)); let new_pos = match cur_pos { Some(0) | None => display_indices.len() - 1, Some(p) => p - 1, }; let master_idx = display_indices[new_pos]; state.select(Some(master_idx)); if let Some(p) = paths.get(master_idx) { preview = read_preview(p).unwrap_or_else(|_e| String::new()); } tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) }); } } Focus::Tags => { if let Some(sel) = tags_selected { let len = unique_tags.len(); if len > 0 { let ni = if sel == 0 { len - 1 } else { sel - 1 }; tags_selected = Some(ni); } } } }
+        if event::poll(Duration::from_millis(200))? {
+            if let CEvent::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        focus = Focus::Tags;
+                        if let Some(dsel) = state.selected() {
+                            if let Some(first_tag) = tags_vec.get(dsel).and_then(|v| v.get(0)) {
+                                tags_selected = unique_tags.iter().position(|t| t == first_tag);
+                                if tags_selected.is_none() && !unique_tags.is_empty() {
+                                    tags_selected = Some(0);
+                                }
+                            } else {
+                                tags_selected = None;
+                            }
+                        } else {
+                            tags_selected = None;
+                        }
+                    }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        focus = Focus::Dumps;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        match focus {
+                            Focus::Dumps => {
+                                if entries.is_empty() {
+                                    // nothing
+                                } else if display_indices.is_empty() {
+                                    // no visible items
+                                } else {
+                                    let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms));
+                                    let new_pos = match cur_pos {
+                                        Some(0) | None => display_indices.len() - 1,
+                                        Some(p) => p - 1,
+                                    };
+                                    let master_idx = display_indices[new_pos];
+                                    state.select(Some(master_idx));
+                                    if let Some(p) = paths.get(master_idx) {
+                                        preview = read_preview(p).unwrap_or_else(|_e| String::new());
+                                    }
+                                    tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) });
+                                }
+                            }
+                            Focus::Tags => {
+                                if let Some(sel) = tags_selected {
+                                    let len = unique_tags.len();
+                                    if len > 0 {
+                                        let ni = if sel == 0 { len - 1 } else { sel - 1 };
+                                        tags_selected = Some(ni);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        match focus {
+                            Focus::Dumps => {
+                                if entries.is_empty() {
+                                    // nothing
+                                } else if display_indices.is_empty() {
+                                    // no visible items
+                                } else {
+                                    let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms));
+                                    let new_pos = match cur_pos {
+                                        None => 0,
+                                        Some(p) => (p + 1) % display_indices.len(),
+                                    };
+                                    let master_idx = display_indices[new_pos];
+                                    state.select(Some(master_idx));
+                                    if let Some(p) = paths.get(master_idx) {
+                                        preview = read_preview(p).unwrap_or_else(|_e| String::new());
+                                    }
+                                    tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) });
+                                }
+                            }
+                            Focus::Tags => {
+                                if let Some(sel) = tags_selected {
+                                    let len = unique_tags.len();
+                                    if len > 0 {
+                                        let ni = (sel + 1) % len;
+                                        tags_selected = Some(ni);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char(' ') => {
+                        if focus == Focus::Tags {
+                            if let Some(tsel) = tags_selected {
+                                if let Some(tag) = unique_tags.get(tsel) {
+                                    if selected_tags.contains(tag) { selected_tags.remove(tag); } else { selected_tags.insert(tag.clone()); }
+                                    // after changing the active tag filter, ensure visibility/selection
+                                    if entries.is_empty() {
+                                        // nothing
+                                    } else {
+                                        let new_display: Vec<usize> = if selected_tags.is_empty() { (0..entries.len()).collect() } else {
+                                            let need: Vec<&String> = selected_tags.iter().collect();
+                                            let mut out: Vec<usize> = Vec::new();
+                                            for (i, tv) in tags_vec.iter().enumerate() {
+                                                let mut ok = true;
+                                                for t in need.iter() { if !tv.iter().any(|x| x == *t) { ok = false; break; } }
+                                                if ok { out.push(i); }
+                                            }
+                                            out
+                                        };
+                                        if new_display.is_empty() {
+                                            state.select(None);
+                                            preview = String::new();
+                                        } else {
+                                            match state.selected() {
+                                                Some(ms) if new_display.iter().any(|&x| x == ms) => {}
+                                                _ => {
+                                                    state.select(Some(new_display[0]));
+                                                    if let Some(p) = paths.get(new_display[0]) {
+                                                        preview = read_preview(p).unwrap_or_else(|_e| String::new());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        selected_tags.clear();
+                        if !entries.is_empty() {
+                            state.select(Some(0));
+                            if let Some(p) = paths.get(0) {
+                                preview = read_preview(p).unwrap_or_else(|_e| String::new());
+                            }
+                        } else {
+                            state.select(None);
+                            preview = String::new();
+                        }
+                    }
+                    KeyCode::Char('m') => {
+                        match_all = !match_all;
+                        let new_display = filter_indices_mode(&selected_tags, &tags_vec, match_all);
+                        if new_display.is_empty() {
+                            state.select(None);
+                            preview = String::new();
+                        } else {
+                            match state.selected() {
+                                Some(ms) if new_display.iter().any(|&x| x == ms) => {}
+                                _ => {
+                                    state.select(Some(new_display[0]));
+                                    if let Some(p) = paths.get(new_display[0]) {
+                                        preview = read_preview(p).unwrap_or_else(|_e| String::new());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(pager) = pager_cmd.clone() {
+                            if let Some(i) = state.selected() {
+                                let path = paths[i].clone();
+
+                                // restore terminal to normal
+                                let _ = disable_raw_mode();
+                                let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+                                let _ = terminal.show_cursor();
+
+                                // spawn pager and forward signals while it runs
+                                let child = Command::new(pager).arg(&path).spawn();
+
+                                if let Ok(mut child) = child {
+                                    loop {
+                                        if let Ok(sig) = sig_rx.try_recv() {
+                                            unsafe { libc::kill(child.id() as i32, sig); }
+                                        }
+                                        match child.try_wait() {
+                                            Ok(Some(_)) => break,
+                                            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                                            Err(_) => break,
+                                        }
+                                    }
+                                }
+
+                                // Recreate terminal backend and re-enter alternate screen
+                                let mut stdout = io::stdout();
+                                execute!(stdout, EnterAlternateScreen)?;
+                                let backend = CrosstermBackend::new(stdout);
+                                terminal = Terminal::new(backend)?;
+                                let _ = enable_raw_mode();
+
+                                // refresh preview for current selection
+                                preview = read_preview(&path).unwrap_or_else(|_e| String::new());
+
+                                // Small delay then redraw
+                                std::thread::sleep(Duration::from_millis(100));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
-            KeyCode::Down | KeyCode::Char('j') => { match focus { Focus::Dumps => { if entries.is_empty() {} else { if display_indices.is_empty() {} else { let cur_pos = state.selected().and_then(|ms| display_indices.iter().position(|&x| x == ms)); let new_pos = match cur_pos { None => 0, Some(p) => (p + 1) % display_indices.len(), }; let master_idx = display_indices[new_pos]; state.select(Some(master_idx)); if let Some(p) = paths.get(master_idx) { preview = read_preview(p).unwrap_or_else(|_e| String::new()); } tags_selected = tags_vec.get(master_idx).and_then(|v| if v.is_empty() { None } else { Some(0) }); } } } Focus::Tags => { if let Some(sel) = tags_selected { let len = unique_tags.len(); if len > 0 { let ni = (sel + 1) % len; tags_selected = Some(ni); } } } }
-            }
-            KeyCode::Char(' ') => { if focus == Focus::Tags { if let Some(tsel) = tags_selected { if let Some(tag) = unique_tags.get(tsel) { if selected_tags.contains(tag) { selected_tags.remove(tag); } else { selected_tags.insert(tag.clone()); } if entries.is_empty() {} else { let new_display: Vec<usize> = if selected_tags.is_empty() { (0..entries.len()).collect() } else { let need: Vec<&String> = selected_tags.iter().collect(); let mut out: Vec<usize> = Vec::new(); for (i, tv) in tags_vec.iter().enumerate() { let mut ok = true; for t in need.iter() { if !tv.iter().any(|x| x == *t) { ok = false; break; } } if ok { out.push(i); } } out }; if new_display.is_empty() { state.select(None); preview = String::new(); } else { match state.selected() { Some(ms) if new_display.iter().any(|&x| x == ms) => {}, _ => { state.select(Some(new_display[0])); if let Some(p) = paths.get(new_display[0]) { preview = read_preview(p).unwrap_or_else(|_e| String::new()); } } } } } } } } }
-            KeyCode::Char('c') => { selected_tags.clear(); if !entries.is_empty() { state.select(Some(0)); if let Some(p) = paths.get(0) { preview = read_preview(p).unwrap_or_else(|_e| String::new()); } } else { state.select(None); preview = String::new(); } }
-            KeyCode::Char('m') => { match_all = !match_all; let new_display = filter_indices_mode(&selected_tags, &tags_vec, match_all); if new_display.is_empty() { state.select(None); preview = String::new(); } else { match state.selected() { Some(ms) if new_display.iter().any(|&x| x == ms) => {}, _ => { state.select(Some(new_display[0])); if let Some(p) = paths.get(new_display[0]) { preview = read_preview(p).unwrap_or_else(|_e| String::new()); } } } } }
-            KeyCode::Enter => { if let Some(pager) = pager_cmd.clone() { if let Some(i) = state.selected() { let path = paths[i].clone(); let _ = disable_raw_mode(); let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen); let _ = terminal.show_cursor(); let child = Command::new(pager).arg(&path).spawn(); if let Ok(mut child) = child { loop { if let Ok(sig) = sig_rx.try_recv() { unsafe { libc::kill(child.id() as i32, sig); } } match child.try_wait() { Ok(Some(_)) => break, Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)), Err(_) => break, } } } let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen)?; let backend = CrosstermBackend::new(stdout); terminal = Terminal::new(backend)?; let _ = enable_raw_mode(); preview = read_preview(&path).unwrap_or_else(|_e| String::new()); std::thread::sleep(Duration::from_millis(100)); let _ = terminal.draw(|f| { /* tiny redraw omitted - main loop will redraw */ }); } } }
-            _ => {}
-        } } }
+        }
 
         if let Ok(sig) = sig_rx.try_recv() { break; }
     }

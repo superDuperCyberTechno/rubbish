@@ -244,7 +244,33 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                 }
             }
         }
-        WatchEvent::Created(p) | WatchEvent::Modified(p) => {
+        WatchEvent::Created(p) => {
+            if !p.starts_with(dumps_dir) { return; }
+            if let Some((entry, mtime)) = build_entry_from_path(&p) {
+                let (title_meta, tags_meta, meta_ts) = read_metadata_for_path(&p, dumps_dir);
+                let mut real_entry = entry.clone(); if !title_meta.is_empty() { real_entry.1 = title_meta; }
+                let mut use_mtime = mtime;
+                if let Some(sts) = meta_ts { if let Some(dt) = Local.timestamp_opt(sts, 0).single() { real_entry.0 = dt.format("%Y-%m-%d %H:%M:%S").to_string(); } if sts >= 0 { use_mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(sts as u64); } }
+                if let Some(pos) = paths.iter().position(|x| x == &p) {
+                    entries[pos] = real_entry.clone(); tags_vec[pos] = tags_meta; if state.selected() == Some(pos) { *preview = read_preview(&p).unwrap_or_else(|_e| String::new()); }
+                } else {
+                    let mut inserted = false;
+                    for (i, existing) in paths.iter().enumerate() {
+                        let existing_meta_ts = read_metadata_for_path(existing, dumps_dir).2;
+                        let existing_effective = if let Some(est) = existing_meta_ts { if est >= 0 { SystemTime::UNIX_EPOCH + Duration::from_secs(est as u64) } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) } } else { get_mtime(existing).unwrap_or(SystemTime::UNIX_EPOCH) };
+                        if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
+                    }
+                    if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta); }
+                    // For created files (new dumps) always select the top entry so the TUI
+                    // brings the newest dump into view immediately.
+                    state.select(Some(0));
+                    if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
+                }
+            } else {
+                if let Some(pos) = paths.iter().position(|x| x == &p) { paths.remove(pos); entries.remove(pos); tags_vec.remove(pos); match state.selected() { Some(sel) if sel == pos => { if entries.is_empty() { state.select(None); *preview = String::new(); } else { let new_sel = if pos == 0 { 0 } else { pos - 1 }; state.select(Some(new_sel)); if let Some(p2) = paths.get(new_sel) { *preview = read_preview(p2).unwrap_or_else(|_e| String::new()); } } } Some(sel) if sel > pos => { state.select(Some(sel - 1)); } _ => {} } }
+            }
+        }
+        WatchEvent::Modified(p) => {
             if !p.starts_with(dumps_dir) { return; }
             if let Some((entry, mtime)) = build_entry_from_path(&p) {
                 let (title_meta, tags_meta, meta_ts) = read_metadata_for_path(&p, dumps_dir);

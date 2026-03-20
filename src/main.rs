@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::env;
 use tokio::signal;
 use tracing::{error, info};
+use tracing_appender::rolling;
+use tracing_subscriber::fmt::writer::MakeWriterExt;
 
 // Embed the TUI module (kept in `src/tui.rs`) and expose its runner
 mod tui;
@@ -14,18 +16,26 @@ pub use tui::run_tui as run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Silence tracing logs (send to sink) so the TUI's stderr/stdout remain clean.
-    tracing_subscriber::fmt()
-        .with_writer(std::io::sink)
-        .init();
+    // Configure tracing to append logs to ~/.local/share/rubbish/info.log
+    let mut log_path = match env::var("XDG_DATA_HOME") {
+        Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("info.log"),
+        _ => match env::var("HOME") {
+            Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("info.log"),
+            Err(_) => PathBuf::from("./info.log"),
+        },
+    };
+    if let Some(parent) = log_path.parent() { let _ = fs::create_dir_all(parent); }
+    // rolling::never will append to the same file
+    let file_appender = rolling::never(log_path.parent().unwrap_or_else(|| PathBuf::from(".").as_path()), log_path.file_name().and_then(|s| s.to_str()).unwrap_or("info.log"));
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt().with_writer(non_blocking).init();
 
     // Start the TUI in a background thread so we can run the Axum server in this Tokio runtime.
     // Use a oneshot channel so the TUI can signal the server to shut down when it exits.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tui_handle = std::thread::spawn(move || {
         if let Err(e) = crate::tui::run_tui() {
-            // route TUI errors through tracing so they are discarded by the sink above
-            tracing::error!("TUI error: {}", e);
+            eprintln!("TUI error: {}", e);
         }
         // notify main to shut down the server when the TUI exits (ignore send errors)
         let _ = shutdown_tx.send(());

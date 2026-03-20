@@ -470,30 +470,27 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // size. When tags exist we allocate three columns: Tags (percent),
             // Dumps (fixed Length(23)), Preview (rest). When tags are absent we
             // allocate two columns: Dumps (fixed) and Preview (rest).
-            let (chunks, left_chunks) = if unique_tags.is_empty() {
-                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
-                // left_chunks: [tags-area(empty), dumps-area]
-                let left_chunks = vec![Rect { x: chunks[0].x, y: chunks[0].y, width: 0, height: chunks[0].height }, chunks[0]];
-                (chunks, left_chunks)
+            let chunks = if unique_tags.is_empty() {
+                Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area)
             } else {
                 // Three columns: Tags | Dumps(fixed) | Preview
-                let mut chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
+                let mut cols = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
                 // transfer 10 columns from Tags to Preview to make Tags narrower
                 let transfer: u16 = 10;
-                if chunks[0].width > transfer {
-                    chunks[0].width = chunks[0].width.saturating_sub(transfer);
-                    chunks[2].x = chunks[2].x.saturating_sub(transfer);
-                    chunks[2].width = chunks[2].width.saturating_add(transfer);
+                if cols[0].width > transfer {
+                    cols[0].width = cols[0].width.saturating_sub(transfer);
+                    cols[2].x = cols[2].x.saturating_sub(transfer);
+                    cols[2].width = cols[2].width.saturating_add(transfer);
                 }
-                // left_chunks: [tags-area, dumps-area]
-                let left_chunks = vec![chunks[0], chunks[1]];
-                (chunks, left_chunks)
+                cols
             };
 
-            // Derive explicit tags and dumps rects so the Dumps area remains a
-            // fixed-size Rect (23 columns outer) regardless of resizing.
+            // Derive explicit tags, dumps and preview rects so the Dumps area
+            // remains a fixed-size Rect (23 columns outer) regardless of
+            // resizing.
             let tags_area: Rect = if unique_tags.is_empty() { Rect { x: chunks[0].x, y: chunks[0].y, width: 0, height: chunks[0].height } } else { chunks[0] };
             let dumps_area: Rect = if unique_tags.is_empty() { chunks[0] } else { chunks[1] };
+            let preview_area: Rect = if unique_tags.is_empty() { chunks[1] } else { chunks[2] };
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
 
@@ -520,8 +517,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             };
             let preview_widget = RawPreview { text: &preview };
             let block = Block::default().borders(Borders::ALL).title(preview_title);
-            let inner = block.inner(chunks[1]);
-            f.render_widget(block, chunks[1]);
+            let inner = block.inner(preview_area);
+            f.render_widget(block, preview_area);
             f.render_widget(preview_widget, inner);
 
             // Only render the Tags box when there are tags to show. If there are no

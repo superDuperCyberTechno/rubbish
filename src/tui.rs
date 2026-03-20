@@ -456,37 +456,31 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 (chunks, left_chunks)
             };
 
-            // Determine the dumps column target width. If the available width
-            // can't contain 21 characters, fall back to 10 characters (or the
-            // available width if even smaller). When using the narrow width we
-            // display only the HH:MM:SS time portion of the timestamp.
-            let dumps_avail_w = left_chunks[1].width as usize;
-            let target_col_w = if dumps_avail_w >= 21 { 21 } else if dumps_avail_w >= 10 { 10 } else { dumps_avail_w };
+            // Determine dumps column width; if the available area is too small
+            // to display 21 characters, fall back to 10 and show only HH:MM:SS.
+            let dumps_area_w = left_chunks[1].width as usize;
+            let dumps_col_w = if dumps_area_w < 21 { 10usize } else { 21usize };
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| {
                 let prefix = if Some(i) == state.selected() { "  " } else { "" };
-                // If we're in narrow mode (10 cols) show only HH:MM:SS
-                let ts_display = if target_col_w == 10 {
-                    // take last whitespace-separated token (usually HH:MM:SS)
-                    ts.split_whitespace().last().map(|s| s.to_string()).unwrap_or_else(|| ts.clone())
+                let display_ts = if dumps_area_w < 21 {
+                    // prefer HH:MM:SS when space constrained
+                    if let Some(pos) = ts.rfind(' ') {
+                        ts[pos+1..].to_string()
+                    } else if ts.len() >= 8 {
+                        ts.chars().rev().take(8).collect::<String>().chars().rev().collect()
+                    } else {
+                        ts.clone()
+                    }
                 } else {
                     ts.clone()
                 };
-                // Trim to fit into target_col_w minus prefix width
-                let avail = target_col_w.saturating_sub(UnicodeWidthStr::width(prefix) as usize);
-                let mut acc = String::new(); let mut cur_w = 0usize;
-                for ch in ts_display.chars() {
-                    let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                    if cur_w + cw > avail { break; }
-                    acc.push(ch); cur_w += cw;
-                }
-                let cell = format!("{}{}", prefix, acc);
+                let cell = format!("{}{}", prefix, display_ts);
                 Row::new(vec![Cell::from(cell)])
             }).collect();
 
             let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-            let table_widths = [Constraint::Length(target_col_w as u16)];
-            let table = Table::new(rows).block(table_block.clone()).widths(&table_widths).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(dumps_col_w as u16)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
             if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }

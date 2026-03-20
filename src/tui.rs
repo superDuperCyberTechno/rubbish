@@ -439,14 +439,53 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(master_sel) = state.selected() { if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) { let inner = table_block.inner(left_chunks[1]); struct Marker; impl Widget for Marker { fn render(self, area: Rect, buf: &mut Buffer) { let y = area.y as u16; buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD)); } } if display_pos < inner.height as usize { let mut area = inner; area.y = inner.y + display_pos as u16; area.height = 1; f.render_widget(Marker, area); } } }
             }
 
-            let preview_widget = RawPreview { text: &preview }; let block = Block::default().borders(Borders::ALL).title("Preview"); let inner = block.inner(chunks[1]); f.render_widget(block, chunks[1]); f.render_widget(preview_widget, inner);
+            // Determine block title from the dump's metadata `title` (rubbish-title).
+            // If no rubbish-title was supplied, render an empty title.
+            let preview_title: String = match state.selected().and_then(|i| paths.get(i)) {
+                Some(pth) => {
+                    let (meta_title, _meta_tags, _meta_ts) = read_metadata_for_path(pth, &dumps_dir);
+                    if meta_title.is_empty() { String::new() } else { meta_title }
+                }
+                None => String::new(),
+            };
+            let preview_widget = RawPreview { text: &preview };
+            let block = Block::default().borders(Borders::ALL).title(preview_title);
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
+            f.render_widget(preview_widget, inner);
 
             if unique_tags.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Tags"); f.render_widget(empty_block, left_chunks[0]); }
             else { let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len()); for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); } let tags_block = Block::default().borders(Borders::ALL).title("Tags"); let tags_block_clone = tags_block.clone(); f.render_widget(tags_block_clone, left_chunks[0]); let inner = tags_block.inner(left_chunks[0]); let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected }; f.render_widget(raw, inner); }
 
-            let (sel_title, sel_size) = match state.selected().and_then(|i| entries.get(i)) { Some((_ts, title, size_str)) => (title.clone(), size_str.clone()), None => (String::new(), String::new()), };
-            let width = vchunks[1].width as usize; let size_w = UnicodeWidthStr::width(sel_size.as_str()); if size_w >= width { let mut acc = String::new(); let mut cur_w = 0usize; for ch in sel_size.chars() { let cw = UnicodeWidthStr::width(ch.to_string().as_str()); if cur_w + cw > width { break; } acc.push(ch); cur_w += cw; } f.render_widget(Paragraph::new(acc), vchunks[1]); }
-            else { let max_title_w = width.saturating_sub(size_w + 1); let title_w = UnicodeWidthStr::width(sel_title.as_str()); let title_display = if title_w <= max_title_w { sel_title.clone() } else if max_title_w >= 4 { let mut acc = String::new(); let mut cur_w = 0usize; for ch in sel_title.chars() { let cw = UnicodeWidthStr::width(ch.to_string().as_str()); if cur_w + cw + 3 > max_title_w { break; } acc.push(ch); cur_w += cw; } acc.push_str("..."); acc } else { String::new() }; let right_side = sel_size.clone(); let pad_count = width.saturating_sub(UnicodeWidthStr::width(title_display.as_str()) + UnicodeWidthStr::width(right_side.as_str())); let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>(); let final_line = format!("{}{}{}", title_display, pad, right_side); f.render_widget(Paragraph::new(final_line), vchunks[1]); }
+            // Render the selected dump's size in the bottom-right of the preview box
+            let sel_size = match state.selected().and_then(|i| entries.get(i)) {
+                Some((_ts, _title, size_str)) => size_str.clone(),
+                None => String::new(),
+            };
+            if !sel_size.is_empty() {
+                let mut size_display = sel_size.clone();
+                let inner_w = inner.width as usize;
+                if inner_w > 0 {
+                    let mut size_w = UnicodeWidthStr::width(size_display.as_str());
+                    if size_w > inner_w {
+                        // truncate to fit into the preview width
+                        let mut acc = String::new();
+                        let mut cur_w = 0usize;
+                        for ch in size_display.chars() {
+                            let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+                            if cur_w + cw > inner_w { break; }
+                            acc.push(ch);
+                            cur_w += cw;
+                        }
+                        size_display = acc;
+                        size_w = cur_w;
+                    }
+                    let x = inner.x + inner.width.saturating_sub(size_w as u16);
+                    let y = inner.y + inner.height.saturating_sub(1);
+                    let area = Rect { x, y, width: size_w as u16, height: 1 };
+                    f.render_widget(Paragraph::new(size_display), area);
+                }
+            }
         })?;
 
         if event::poll(Duration::from_millis(200))? {

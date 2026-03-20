@@ -938,9 +938,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .split(chunks[0]);
 
             // Render a table with a single column: timestamp. Titles are omitted from the Dumps box.
-            // `rows` is kept for legacy use in the Enter/pager redraw path; keep it but allow
-            // the compiler to know the variable is intentionally unused in this scope.
-            let _rows: Vec<Row> = display_indices
+            let rows: Vec<Row> = display_indices
                 .iter()
                 .filter_map(|&i| entries.get(i).map(|e| (i, e.clone())))
                 .map(|(i, (ts, _title, _size_str))| {
@@ -955,27 +953,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect();
 
-                
-
-            // compute Dumps header title with right-aligned counts C/T
-            let dumps_total = entries.len();
-            let dumps_shown = display_indices.len();
-            let counts_str = format!("{}/{}", dumps_shown, dumps_total);
-            let base_title = "Dumps";
-            let box_w = left_chunks[1].width as usize;
-            let base_w = UnicodeWidthStr::width(base_title);
-            let counts_w = UnicodeWidthStr::width(counts_str.as_str());
-            let pad_count = if box_w > base_w + counts_w { box_w - base_w - counts_w } else { 1 };
-            let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
-            let dumps_title = format!("{}{}{}", base_title, pad, counts_str);
+                let table_block = Block::default().borders(Borders::ALL).title("Dumps");
+                let table = Table::new(rows)
+                .block(table_block.clone())
+                .widths(&[Constraint::Length(21)])
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
                 // draw an empty bordered Dumps block when there are no dumps
-                let empty_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
+                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
                 f.render_widget(empty_block, left_chunks[1]);
             } else if display_indices.is_empty() {
                 // draw an empty bordered Dumps block when the active tag filter matches nothing
-                let empty_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
+                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
                 f.render_widget(empty_block, left_chunks[1]);
             } else {
                 // build a temporary TableState that selects the position within the displayed
@@ -993,31 +983,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     display_state.select(None);
                 }
 
-                // Render table block with a header showing total/visible counts
-                // use the previously computed dumps_title (C/T, right-aligned)
-                let table_block = Block::default().borders(Borders::ALL).title(dumps_title.clone());
-
-                // Recreate rows for the table area here so we can use them for rendering
-                let table_rows: Vec<Row> = display_indices
-                    .iter()
-                    .filter_map(|&i| entries.get(i).map(|e| (i, e.clone())))
-                    .map(|(i, (ts, _title, _size_str))| {
-                        let prefix = if Some(i) == state.selected() { "  " } else { "" };
-                        let cell = format!("{}{}", prefix, ts);
-                        Row::new(vec![Cell::from(cell)])
-                    })
-                    .collect();
-
-                let table = Table::new(table_rows)
-                    .block(table_block.clone())
-                    .widths(&[Constraint::Length(21)])
-                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
-
                 if focus == Focus::Dumps {
                     f.render_stateful_widget(table, left_chunks[1], &mut display_state);
                 } else {
                     f.render_widget(table, left_chunks[1]);
                 }
+
+                // Render right-aligned counts C/T on the top border of the Dumps block.
+                // C = currently shown (after filter), T = total entries.
+                let total = entries.len();
+                let shown = display_indices.len();
+                let counts = format!("{}/{}", shown, total);
+                let count_w = UnicodeWidthStr::width(counts.as_str()) as u16;
+                // place counts on the top border row, near the right edge (overwrite border)
+                let count_area = Rect {
+                    x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1),
+                    y: left_chunks[1].y,
+                    width: count_w,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(counts), count_area);
 
                 // draw a marker glyph '>' at the leftmost column of the focused display row
                 if let Some(master_sel) = state.selected() {
@@ -1379,19 +1364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         })
                                         .collect();
 
-                                    // compute header counts C/T for the Dumps box (right-aligned)
-                                    let dumps_total = entries.len();
-                                    let dumps_shown = display_indices.len();
-                                    let counts_str = format!("{}/{}", dumps_shown, dumps_total);
-                                    let base_title = "Dumps";
-                                    let box_w = left_chunks[1].width as usize;
-                                    let base_w = UnicodeWidthStr::width(base_title);
-                                    let counts_w = UnicodeWidthStr::width(counts_str.as_str());
-                                    let pad_count = if box_w > base_w + counts_w { box_w - base_w - counts_w } else { 1 };
-                                    let pad = std::iter::repeat('\u{00A0}').take(pad_count).collect::<String>();
-                                    let dumps_title = format!("{}{}{}", base_title, pad, counts_str);
-
-                                    let table_block = Block::default().borders(Borders::ALL).title(dumps_title);
+                                    let table_block = Block::default().borders(Borders::ALL).title("Dumps");
                                     let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]);
                                     f.render_stateful_widget(table, left_chunks[1], &mut state);
 

@@ -429,13 +429,34 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // If there are no tags, reserve a small fixed-width column for the
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
-            let (chunks, left_chunks) = if unique_tags.is_empty() {
+            let (mut chunks, mut left_chunks) = if unique_tags.is_empty() {
                 let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
                 let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
                 (chunks, left_chunks)
             } else {
-                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
-                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
+                // default percentage split
+                let mut chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
+                let mut left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
+
+                // Make the Tags-box 5 characters narrower and adjust positions so
+                // the Dumps box remains the same width (left-aligned) and the
+                // preview box grows by 5 characters while keeping its right edge
+                // aligned.
+                let reduce: u16 = 5;
+                // shrink tags area
+                if left_chunks[0].width > reduce {
+                    left_chunks[0].width = left_chunks[0].width.saturating_sub(reduce);
+                } else {
+                    left_chunks[0].width = 0;
+                }
+                // move dumps box to directly follow tags area
+                left_chunks[1].x = left_chunks[0].x + left_chunks[0].width;
+                left_chunks[1].width = 23u16;
+
+                // expand preview on the right, keep its right edge fixed
+                chunks[1].x = chunks[1].x.saturating_sub(reduce);
+                chunks[1].width = chunks[1].width.saturating_add(reduce);
+
                 (chunks, left_chunks)
             };
 
@@ -463,7 +484,7 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 None => String::new(),
             };
             let preview_widget = RawPreview { text: &preview };
-            let block = Block::default().borders(Borders::ALL).title(preview_title.clone());
+            let block = Block::default().borders(Borders::ALL).title(preview_title);
             let inner = block.inner(chunks[1]);
             f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
@@ -475,70 +496,11 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len());
                 for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); }
                 let tags_block = Block::default().borders(Borders::ALL).title("Tags");
-                // Make the tags box 5 characters narrower visually by shrinking the
-                // area we render it into. We don't adjust the Dumps box — it keeps
-                // its width and position.
-                let mut tags_rect = left_chunks[0];
-                tags_rect.width = tags_rect.width.saturating_sub(5);
-
                 let tags_block_clone = tags_block.clone();
-                f.render_widget(tags_block_clone, tags_rect);
-                let inner = tags_block.inner(tags_rect);
+                f.render_widget(tags_block_clone, left_chunks[0]);
+                let inner = tags_block.inner(left_chunks[0]);
                 let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected };
                 f.render_widget(raw, inner);
-
-                // Expand the preview area to the right by 5 columns (compensate
-                // for the narrower tags box) by shifting its rectangle left and
-                // increasing its width. This gives the preview 5 extra columns
-                // while leaving the Dumps box width unchanged.
-                let mut preview_rect = chunks[1];
-                preview_rect.x = preview_rect.x.saturating_sub(5);
-                preview_rect.width = preview_rect.width.saturating_add(5);
-                // Use preview_rect for subsequent preview rendering
-                let preview_widget = RawPreview { text: &preview };
-                let block = Block::default().borders(Borders::ALL).title(preview_title.clone());
-                let inner = block.inner(preview_rect);
-                f.render_widget(block, preview_rect);
-                f.render_widget(preview_widget, inner);
-                // Skip the default preview rendering below since we've already
-                // rendered it here.
-                // Also skip the bottom-right size render because it expects
-                // chunks[1] — we will render the size relative to preview_rect
-                // instead later.
-                // Render size below using preview_rect
-                let sel_size = match state.selected().and_then(|i| entries.get(i)) {
-                    Some((_ts, _title, size_str)) => size_str.clone(),
-                    None => String::new(),
-                };
-                if !sel_size.is_empty() {
-                    let mut size_display = sel_size.clone();
-                    let outer = preview_rect;
-                    let outer_w = outer.width as usize;
-                    if outer_w > 0 {
-                        let mut size_w = UnicodeWidthStr::width(size_display.as_str());
-                        if size_w + 1 >= outer_w {
-                            let mut acc = String::new();
-                            let mut cur_w = 0usize;
-                            let max_w = outer_w.saturating_sub(1);
-                            for ch in size_display.chars() {
-                                let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                                if cur_w + cw > max_w { break; }
-                                acc.push(ch);
-                                cur_w += cw;
-                            }
-                            size_display = acc;
-                            size_w = UnicodeWidthStr::width(size_display.as_str());
-                        }
-                        let x = outer.x + outer.width.saturating_sub(size_w as u16 + 1);
-                        let y = outer.y + outer.height.saturating_sub(1);
-                        let area = Rect { x, y, width: size_w as u16, height: 1 };
-                        f.render_widget(Paragraph::new(size_display), area);
-                    }
-                }
-                // Jump past the default preview handling
-                // (we've already rendered preview, tags and size)
-                // Continue to next draw tasks
-                return;
             }
 
             // Render the selected dump's size in the bottom-right of the preview box

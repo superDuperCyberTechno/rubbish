@@ -226,7 +226,7 @@ fn filter_indices_mode(selected_tags: &HashSet<String>, tags_vec: &Vec<Vec<Strin
     out
 }
 
-// right_align is unused after removing the size column from the table
+// stale: right_align was removed after dropping the size column from the Dumps table
 
 fn scan_dumps(dumps_dir: &std::path::Path) -> (Vec<(String, String, String)>, Vec<std::path::PathBuf>, Vec<Vec<String>>) {
     // Collect dumps and prefer a server-provided metadata timestamp for ordering when available.

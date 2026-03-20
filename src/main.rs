@@ -89,44 +89,7 @@ async fn handle_dump(headers: HeaderMap, body: axum::body::Bytes) -> impl IntoRe
     }
 }
 
-#[allow(dead_code)]
-fn make_filename(_headers: &HeaderMap, id: &str) -> String {
-    // legacy helper retained but now filenames are ULID-only
-    id.to_string()
-}
-
-#[allow(dead_code, unused)]
-fn sanitize_title(s: &str) -> String {
-    // keep alphanumeric, dash, underscore and spaces; convert spaces to underscore;
-    // collapse runs and truncate to 60 chars
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c.is_whitespace() {
-            if c.is_whitespace() {
-                out.push('_');
-            } else {
-                out.push(c);
-            }
-        }
-    }
-    // collapse multiple underscores
-    let mut collapsed = String::with_capacity(out.len());
-    let mut prev_underscore = false;
-    for c in out.chars() {
-        if c == '_' {
-            if !prev_underscore {
-                collapsed.push(c);
-            }
-            prev_underscore = true;
-        } else {
-            collapsed.push(c);
-            prev_underscore = false;
-        }
-    }
-    let trimmed = collapsed.trim_matches('_');
-    let res: String = trimmed.chars().take(60).collect();
-    res
-}
+// legacy helpers removed: filenames are ULID-only and title sanitization is unused
 
 async fn save_bytes(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     // write atomically: write to tmp then rename

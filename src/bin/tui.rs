@@ -576,27 +576,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // - "inherit": inherit stdout/stderr so server logs appear in the terminal
         // - any other value: treated as a path to append to (created) for logging
         let server_log_cfg = env::var("RUBBISH_SERVER_LOG").ok();
-        let (stdout_dest, stderr_dest) = match server_log_cfg.as_deref() {
-            Some("inherit") => (Stdio::inherit(), Stdio::inherit()),
-            Some("null") => (Stdio::null(), Stdio::null()),
-            Some(path) => match fs::OpenOptions::new().create(true).append(true).open(path) {
-                Ok(f) => match f.try_clone() {
-                    Ok(f2) => {
-                        eprintln!("server logs -> {}", path);
-                        (Stdio::from(f), Stdio::from(f2))
-                    }
-                    Err(_) => {
-                        eprintln!("warning: failed to clone server log file; disabling logging");
-                        (Stdio::null(), Stdio::null())
-                    }
-                },
-                Err(_) => {
-                    eprintln!("warning: failed to open server log file '{}'; logging disabled", path);
-                    (Stdio::null(), Stdio::null())
-                }
-            },
-            None => (Stdio::null(), Stdio::null()),
-        };
 
         // Try several candidate server executables in order before falling back to `cargo run`.
         let candidates = [

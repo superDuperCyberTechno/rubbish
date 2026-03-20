@@ -40,20 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use a oneshot channel so the TUI can signal the server to shut down when it exits.
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let tui_handle = std::thread::spawn(move || {
-        // If the TUI fails to initialize (for example when not running in a
-        // TTY), log the error but do NOT signal the server to shut down —
-        // we want the HTTP server to keep running in headless environments.
-        match crate::tui::run_tui() {
-            Ok(_) => {
-                // TUI exited normally; notify main to shut down the server.
-                let _ = shutdown_tx.send(());
-            }
-            Err(e) => {
-                eprintln!("TUI error: {}", e);
-                tracing::error!(%e, "TUI failed to start");
-                // don't send shutdown; run headless
-            }
+        if let Err(e) = crate::tui::run_tui() {
+            eprintln!("TUI error: {}", e);
         }
+        // notify main to shut down the server when the TUI exits (ignore send errors)
+        let _ = shutdown_tx.send(());
     });
 
     // Run HTTP server using Axum; bind to localhost:7771. Accept dumps at `/`.

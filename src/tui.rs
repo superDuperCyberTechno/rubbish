@@ -360,13 +360,6 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
 enum WatchEvent { Created(std::path::PathBuf), Modified(std::path::PathBuf), Removed(std::path::PathBuf), Rescan }
 
 pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
-    // If stdout or stdin is not a terminal, run in headless mode: no TUI.
-    // This avoids initialization errors when running under non-interactive
-    // environments (CI, background services, etc.).
-    if !(atty::is(atty::Stream::Stdout) && atty::is(atty::Stream::Stdin)) {
-        tracing::info!("TTY not available - running headless (no TUI)");
-        return Ok(());
-    }
     // Determine dumps directory
     let mut dumps_dir: PathBuf = match env::var("XDG_DATA_HOME") { Ok(x) if !x.is_empty() => PathBuf::from(x).join("rubbish").join("dumps"), _ => match env::var("HOME") { Ok(h) => PathBuf::from(h).join(".local").join("share").join("rubbish").join("dumps"), Err(_) => PathBuf::from("./dumps"), }, };
     if let Err(_e) = fs::create_dir_all(&dumps_dir) { dumps_dir = PathBuf::from("./dumps"); let _ = fs::create_dir_all(&dumps_dir); }
@@ -415,27 +408,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Setup terminal and interactive UI. If terminal initialization fails
-    // (e.g. not running in a TTY), don't exit the process immediately — log
-    // the error and wait for a termination signal so the server can keep
-    // running. This avoids the TUI thread returning an error and triggering
-    // an immediate shutdown of the HTTP server.
-    let mut terminal = match (|| -> Result<Terminal<CrosstermBackend<std::io::Stdout>>, Box<dyn std::error::Error>> {
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
-        let backend = CrosstermBackend::new(stdout);
-        let term = Terminal::new(backend)?;
-        Ok(term)
-    })() {
-        Ok(t) => t,
-        Err(e) => {
-            // If TUI cannot initialize (no TTY), surface the error to the
-            // caller so the main thread can decide whether to keep the
-            // server running. Do not block here.
-            return Err(e);
-        }
-    };
+    // Setup terminal and interactive UI
+    enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen)?; let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
 
     let mut state = TableState::default(); if entries.is_empty() { state.select(None); } else { state.select(Some(0)); }
     let mut tags_selected: Option<usize> = None; let mut focus: Focus = Focus::Dumps; let mut match_all: bool = true;
@@ -460,45 +434,40 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             // If there are no tags, reserve a small fixed-width column for the
             // Dumps box (keep its width unchanged) and expand the preview to the
             // right. When tags are present use the normal percentage split.
-            // Build horizontal columns. We always keep the Dumps box at a
-            // static width (23) so it never resizes when the terminal changes
-            // size. When tags exist we allocate three columns: Tags (percent),
-            // Dumps (fixed Length(23)), Preview (rest). When tags are absent we
-            // allocate two columns: Dumps (fixed) and Preview (rest).
-            let chunks = if unique_tags.is_empty() {
-                Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area)
+            let (chunks, left_chunks) = if unique_tags.is_empty() {
+                let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(0), Constraint::Length(23)].as_ref()).split(chunks[0]);
+                (chunks, left_chunks)
             } else {
-                // Three columns: Tags | Dumps(fixed) | Preview
-                let mut cols = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Length(23), Constraint::Min(0)].as_ref()).split(content_area);
-                // transfer 10 columns from Tags to Preview to make Tags narrower
+                // Start with percentage split, then transfer 10 columns from the
+                // Tags box to the preview box by shrinking chunks[0] and
+                // expanding chunks[1]. Recompute left_chunks after adjustment so
+                // the Dumps box (right side of the left column) remains the
+                // fixed width (23) and the Tags box becomes 10 chars narrower.
+                let mut chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
+                // move 10 columns from left to right if possible
                 let transfer: u16 = 10;
-                if cols[0].width > transfer {
-                    cols[0].width = cols[0].width.saturating_sub(transfer);
-                    cols[2].x = cols[2].x.saturating_sub(transfer);
-                    cols[2].width = cols[2].width.saturating_add(transfer);
+                if chunks[0].width > transfer {
+                    chunks[0].width = chunks[0].width.saturating_sub(transfer);
+                    chunks[1].x = chunks[1].x.saturating_sub(transfer);
+                    chunks[1].width = chunks[1].width.saturating_add(transfer);
                 }
-                cols
+                let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
+                (chunks, left_chunks)
             };
-
-            // Derive explicit tags, dumps and preview rects so the Dumps area
-            // remains a fixed-size Rect (23 columns outer) regardless of
-            // resizing.
-            let tags_area: Rect = if unique_tags.is_empty() { Rect { x: chunks[0].x, y: chunks[0].y, width: 0, height: chunks[0].height } } else { chunks[0] };
-            let dumps_area: Rect = if unique_tags.is_empty() { chunks[0] } else { chunks[1] };
-            let preview_area: Rect = if unique_tags.is_empty() { chunks[1] } else { chunks[2] };
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
 
             let table_block = Block::default().borders(Borders::ALL).title("Dumps"); let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
-            if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, dumps_area); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }
-            else if display_indices.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, dumps_area); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }
+            if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }
+            else if display_indices.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }
             else {
                 let mut display_state = tui::widgets::TableState::default(); if let Some(master_sel) = state.selected() { if let Some(pos) = display_indices.iter().position(|&x| x == master_sel) { display_state.select(Some(pos)); } else { display_state.select(None); } } else { display_state.select(None); }
-                if focus == Focus::Dumps { f.render_stateful_widget(table, dumps_area, &mut display_state); } else { f.render_widget(table, dumps_area); }
-                let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); }
-                if let Some(master_sel) = state.selected() { if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) { let inner = table_block.inner(dumps_area); struct Marker; impl Widget for Marker { fn render(self, area: Rect, buf: &mut Buffer) { let y = area.y as u16; buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD)); } } if display_pos < inner.height as usize { let mut area = inner; area.y = inner.y + display_pos as u16; area.height = 1; f.render_widget(Marker, area); } } }
+                if focus == Focus::Dumps { f.render_stateful_widget(table, left_chunks[1], &mut display_state); } else { f.render_widget(table, left_chunks[1]); }
+                let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); }
+                if let Some(master_sel) = state.selected() { if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) { let inner = table_block.inner(left_chunks[1]); struct Marker; impl Widget for Marker { fn render(self, area: Rect, buf: &mut Buffer) { let y = area.y as u16; buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD)); } } if display_pos < inner.height as usize { let mut area = inner; area.y = inner.y + display_pos as u16; area.height = 1; f.render_widget(Marker, area); } } }
             }
 
             // Determine block title from the dump's metadata `title` (rubbish-title).
@@ -512,8 +481,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             };
             let preview_widget = RawPreview { text: &preview };
             let block = Block::default().borders(Borders::ALL).title(preview_title);
-            let inner = block.inner(preview_area);
-            f.render_widget(block, preview_area);
+            let inner = block.inner(chunks[1]);
+            f.render_widget(block, chunks[1]);
             f.render_widget(preview_widget, inner);
 
             // Only render the Tags box when there are tags to show. If there are no
@@ -524,8 +493,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); }
                 let tags_block = Block::default().borders(Borders::ALL).title("Tags");
                 let tags_block_clone = tags_block.clone();
-                f.render_widget(tags_block_clone, tags_area);
-                let inner = tags_block.inner(tags_area);
+                f.render_widget(tags_block_clone, left_chunks[0]);
+                let inner = tags_block.inner(left_chunks[0]);
                 let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected };
                 f.render_widget(raw, inner);
             }

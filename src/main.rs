@@ -29,7 +29,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_name = log_path.file_name().and_then(|s| s.to_str()).unwrap_or("info.log").to_string();
     let file_appender = rolling::never(parent_dir, file_name);
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::fmt().with_writer(non_blocking).init();
+    // Ensure logs are written in plain text (no ANSI colors, not JSON) to the file.
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_target(false)
+        .init();
 
     // Start the TUI in a background thread so we can run the Axum server in this Tokio runtime.
     // Use a oneshot channel so the TUI can signal the server to shut down when it exits.

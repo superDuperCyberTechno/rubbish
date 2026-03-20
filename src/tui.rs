@@ -427,19 +427,22 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             content_area.height = content_area.height.saturating_add(1);
             let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
             let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
+            // If there are no tags, the dumps area should use the full left column.
+            let dumps_area = if unique_tags.is_empty() { chunks[0] } else { left_chunks[1] };
+            let tags_area = if unique_tags.is_empty() { None } else { Some(left_chunks[0]) };
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
 
             let table_block = Block::default().borders(Borders::ALL).title("Dumps"); let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(21)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
-            if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area); }
-            else if display_indices.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area); }
+            if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, dumps_area); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area); }
+            else if display_indices.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, dumps_area); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area); }
             else {
                 let mut display_state = tui::widgets::TableState::default(); if let Some(master_sel) = state.selected() { if let Some(pos) = display_indices.iter().position(|&x| x == master_sel) { display_state.select(Some(pos)); } else { display_state.select(None); } } else { display_state.select(None); }
-                if focus == Focus::Dumps { f.render_stateful_widget(table, left_chunks[1], &mut display_state); } else { f.render_widget(table, left_chunks[1]); }
-                let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area);
-                if let Some(master_sel) = state.selected() { if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) { let inner = table_block.inner(left_chunks[1]); struct Marker; impl Widget for Marker { fn render(self, area: Rect, buf: &mut Buffer) { let y = area.y as u16; buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD)); } } if display_pos < inner.height as usize { let mut area = inner; area.y = inner.y + display_pos as u16; area.height = 1; f.render_widget(Marker, area); } } }
+                if focus == Focus::Dumps { f.render_stateful_widget(table, dumps_area, &mut display_state); } else { f.render_widget(table, dumps_area); }
+                let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: dumps_area.x + dumps_area.width.saturating_sub(count_w + 1), y: dumps_area.y, width: count_w, height: 1 }; f.render_widget(Paragraph::new(counts), count_area);
+                if let Some(master_sel) = state.selected() { if let Some(display_pos) = display_indices.iter().position(|&x| x == master_sel) { let inner = table_block.inner(dumps_area); struct Marker; impl Widget for Marker { fn render(self, area: Rect, buf: &mut Buffer) { let y = area.y as u16; buf.set_stringn(area.x, y, ">", 1, Style::default().add_modifier(Modifier::BOLD)); } } if display_pos < inner.height as usize { let mut area = inner; area.y = inner.y + display_pos as u16; area.height = 1; f.render_widget(Marker, area); } } }
             }
 
             // Determine block title from the dump's metadata `title` (rubbish-title).
@@ -465,8 +468,9 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
                 for t in unique_tags.iter() { let cnt = tags_vec.iter().filter(|tv| tv.iter().any(|x| x == t)).count(); counts.push(cnt); }
                 let tags_block = Block::default().borders(Borders::ALL).title("Tags");
                 let tags_block_clone = tags_block.clone();
-                f.render_widget(tags_block_clone, left_chunks[0]);
-                let inner = tags_block.inner(left_chunks[0]);
+                let area = tags_area.unwrap();
+                f.render_widget(tags_block_clone, area);
+                let inner = tags_block.inner(area);
                 let raw = RawTags { tags: &unique_tags, counts: &counts, selected_tags: &selected_tags, focus: focus == Focus::Tags, tags_selected };
                 f.render_widget(raw, inner);
             }

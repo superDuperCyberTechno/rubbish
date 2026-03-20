@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["v4"] }
 ulid = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+tracing-appender = "0.2"
 atty = "0.2"
 hyper = { version = "1", features = ["server"] }
 tui = "0.19"

@@ -464,24 +464,28 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             };
             if !sel_size.is_empty() {
                 let mut size_display = sel_size.clone();
-                let inner_w = inner.width as usize;
-                if inner_w > 0 {
+                // render the size inline with the preview block's bottom border
+                let outer = chunks[1];
+                let outer_w = outer.width as usize;
+                if outer_w > 0 {
                     let mut size_w = UnicodeWidthStr::width(size_display.as_str());
-                    if size_w > inner_w {
-                        // truncate to fit into the preview width
+                    if size_w + 1 >= outer_w {
+                        // truncate to fit into the outer width (reserve 1 for border spacing)
                         let mut acc = String::new();
                         let mut cur_w = 0usize;
+                        // allow at most outer_w - 1 characters worth of width
+                        let max_w = outer_w.saturating_sub(1);
                         for ch in size_display.chars() {
                             let cw = UnicodeWidthStr::width(ch.to_string().as_str());
-                            if cur_w + cw > inner_w { break; }
+                            if cur_w + cw > max_w { break; }
                             acc.push(ch);
                             cur_w += cw;
                         }
                         size_display = acc;
-                        size_w = cur_w;
+                        size_w = UnicodeWidthStr::width(size_display.as_str());
                     }
-                    let x = inner.x + inner.width.saturating_sub(size_w as u16);
-                    let y = inner.y + inner.height.saturating_sub(1);
+                    let x = outer.x + outer.width.saturating_sub(size_w as u16 + 1);
+                    let y = outer.y + outer.height.saturating_sub(1);
                     let area = Rect { x, y, width: size_w as u16, height: 1 };
                     f.render_widget(Paragraph::new(size_display), area);
                 }

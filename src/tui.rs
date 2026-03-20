@@ -485,7 +485,8 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
             }).collect();
 
             let table_block = Block::default().borders(Borders::ALL).title("Dumps");
-            let table = Table::new(rows).block(table_block.clone()).widths(&[Constraint::Length(target_col_w as u16)]).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            let table_widths = [Constraint::Length(target_col_w as u16)];
+            let table = Table::new(rows).block(table_block.clone()).widths(&table_widths).highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             let total = entries.len(); let shown = display_indices.len();
 
             if entries.is_empty() { let empty_block = Block::default().borders(Borders::ALL).title("Dumps"); f.render_widget(empty_block, left_chunks[1]); let counts = format!("{}/{}", shown, total); let count_w = UnicodeWidthStr::width(counts.as_str()) as u16; let count_area = Rect { x: left_chunks[1].x + left_chunks[1].width.saturating_sub(count_w + 1), y: left_chunks[1].y, width: count_w, height: 1 }; if !unique_tags.is_empty() { f.render_widget(Paragraph::new(counts), count_area); } }

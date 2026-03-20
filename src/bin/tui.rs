@@ -611,13 +611,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !cmd.exists() {
                 continue;
             }
-            // Use configured stdout/stderr destinations (do not create server.log implicitly)
-            server_spawn = Command::new(c).stdout(stdout_dest.try_clone().unwrap_or(Stdio::null())).stderr(stderr_dest.try_clone().unwrap_or(Stdio::null())).spawn();
+
+            // For each candidate, build stdout/stderr destinations anew. If the
+            // configuration is a path, open the file per-attempt so we can pass
+            // owned handles to Command::spawn(). For "inherit"/"null" use the
+            // corresponding Stdio values directly.
+            let (out, err) = match server_log_cfg.as_deref() {
+                Some("inherit") => (Stdio::inherit(), Stdio::inherit()),
+                Some("null") | None => (Stdio::null(), Stdio::null()),
+                Some(path) => match fs::OpenOptions::new().create(true).append(true).open(path) {
+                    Ok(f1) => match f1.try_clone() {
+                        Ok(f2) => (Stdio::from(f1), Stdio::from(f2)),
+                        Err(_) => (Stdio::from(f1), Stdio::null()),
+                    },
+                    Err(_) => (Stdio::null(), Stdio::null()),
+                },
+            };
+
+            server_spawn = Command::new(c).stdout(out).stderr(err).spawn();
             if server_spawn.is_ok() { break; }
         }
+
         if server_spawn.is_err() {
-            // final fallback: use `cargo run --bin rubbish` and attach the prepared dests
-            server_spawn = Command::new("cargo").args(["run","--bin","rubbish"]).stdout(stdout_dest).stderr(stderr_dest).spawn();
+            // final fallback: use `cargo run --bin rubbish` and attach configured dests.
+            // Build fresh owned Stdio handles for the cargo fallback the same way.
+            let (out, err) = match server_log_cfg.as_deref() {
+                Some("inherit") => (Stdio::inherit(), Stdio::inherit()),
+                Some("null") | None => (Stdio::null(), Stdio::null()),
+                Some(path) => match fs::OpenOptions::new().create(true).append(true).open(path) {
+                    Ok(f1) => match f1.try_clone() {
+                        Ok(f2) => (Stdio::from(f1), Stdio::from(f2)),
+                        Err(_) => (Stdio::from(f1), Stdio::null()),
+                    },
+                    Err(_) => (Stdio::null(), Stdio::null()),
+                },
+            };
+            server_spawn = Command::new("cargo").args(["run","--bin","rubbish"]).stdout(out).stderr(err).spawn();
         }
 
         let res = match server_spawn {

@@ -730,12 +730,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // initial preview for selected item (used by TTY and non-TTY flows)
+    // If there is no preview available, keep the preview buffer empty so the UI
+    // renders a blank Preview box instead of a message.
     let mut preview = String::new();
     if let Some(p) = paths.get(0) {
-        preview = read_preview(p).unwrap_or_else(|e| format!("failed to read preview: {}", e));
-    }
-    if entries.is_empty() {
-        preview = "(no preview available)".to_string();
+        preview = read_preview(p).unwrap_or_else(|_e| String::new());
     }
 
     // filesystem watcher: notify main thread when dumps_dir content changes
@@ -961,13 +960,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
             if entries.is_empty() {
-                // draw an empty placeholder in the table area when there are no dumps at all
-                let empty = Paragraph::new("(no dumps found)").block(Block::default().borders(Borders::ALL).title("Dumps"));
-                f.render_widget(empty, left_chunks[1]);
+                // draw an empty bordered Dumps block when there are no dumps
+                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
+                f.render_widget(empty_block, left_chunks[1]);
             } else if display_indices.is_empty() {
-                // nothing matches the active tag filter
-                let empty = Paragraph::new("(no dumps match selected tags)").block(Block::default().borders(Borders::ALL).title("Dumps"));
-                f.render_widget(empty, left_chunks[1]);
+                // draw an empty bordered Dumps block when the active tag filter matches nothing
+                let empty_block = Block::default().borders(Borders::ALL).title("Dumps");
+                f.render_widget(empty_block, left_chunks[1]);
             } else {
                 // build a temporary TableState that selects the position within the displayed
                 // rows corresponding to the underlying `state` selection (which indexes the
@@ -1025,8 +1024,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Render tags as a two-column table: tag (left) and count (right). This allows
             // precise control over the count column width so counts are visible and right-aligned.
             if unique_tags.is_empty() {
-                let empty = Paragraph::new("(no tags)").block(Block::default().borders(Borders::ALL).title("Tags"));
-                f.render_widget(empty, left_chunks[0]);
+                // render an empty bordered Tags block when there are no tags
+                let empty_block = Block::default().borders(Borders::ALL).title("Tags");
+                f.render_widget(empty_block, left_chunks[0]);
             } else {
                 // compute counts for each tag
                 let mut counts: Vec<usize> = Vec::with_capacity(unique_tags.len());

@@ -47,8 +47,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = shutdown_tx.send(());
     });
 
-    // Run HTTP server using Axum; bind to localhost:7771 as before.
-    let app = Router::new().route("/dump", post(handle_dump));
+    // Run HTTP server using Axum; bind to localhost:7771. Accept dumps at `/`.
+    let app = Router::new().route("/", post(handle_dump));
     let addr = SocketAddr::from(([127, 0, 0, 1], 7771));
     info!(%addr, "starting rubbish dump server");
 

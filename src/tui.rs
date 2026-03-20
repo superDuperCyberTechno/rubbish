@@ -287,7 +287,9 @@ fn apply_watch_event(ev: WatchEvent, dumps_dir: &std::path::Path, entries: &mut 
                         if use_mtime > existing_effective { paths.insert(i, p.clone()); entries.insert(i, real_entry.clone()); tags_vec.insert(i, tags_meta.clone()); if let Some(sel) = state.selected() { if i <= sel { state.select(Some(sel + 1)); } } inserted = true; break; }
                     }
                     if !inserted { paths.push(p.clone()); entries.push(real_entry); tags_vec.push(tags_meta); }
-                    if state.selected().is_none() { state.select(Some(0)); if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); } }
+                    // Treat Modified like Created: always select top so newest dump is visible
+                    state.select(Some(0));
+                    if let Some(first) = paths.get(0) { *preview = read_preview(first).unwrap_or_else(|_e| String::new()); }
                 }
             } else {
                 if let Some(pos) = paths.iter().position(|x| x == &p) { paths.remove(pos); entries.remove(pos); tags_vec.remove(pos); match state.selected() { Some(sel) if sel == pos => { if entries.is_empty() { state.select(None); *preview = String::new(); } else { let new_sel = if pos == 0 { 0 } else { pos - 1 }; state.select(Some(new_sel)); if let Some(p2) = paths.get(new_sel) { *preview = read_preview(p2).unwrap_or_else(|_e| String::new()); } } } Some(sel) if sel > pos => { state.select(Some(sel - 1)); } _ => {} } }

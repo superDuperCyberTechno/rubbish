@@ -422,7 +422,10 @@ pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
         let display_indices: Vec<usize> = filter_indices_mode(&selected_tags, &tags_vec, match_all);
         terminal.draw(|f| {
             let size = f.size(); let vchunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(size.height.saturating_sub(1)), Constraint::Length(1)].as_ref()).split(size);
-            let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(vchunks[0]);
+            // Increase the main content area by 1 row so boxes include the bottom line
+            let mut content_area = vchunks[0];
+            content_area.height = content_area.height.saturating_add(1);
+            let chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref()).split(content_area);
             let left_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Min(10), Constraint::Length(23)].as_ref()).split(chunks[0]);
 
             let rows: Vec<Row> = display_indices.iter().filter_map(|&i| entries.get(i).map(|e| (i, e.clone()))).map(|(i, (ts, _title, _size_str))| { let prefix = if Some(i) == state.selected() { "  " } else { "" }; let cell = format!("{}{}", prefix, ts); Row::new(vec![Cell::from(cell)]) }).collect();
